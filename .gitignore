@@ -1,6 +1,5 @@
 *.o
 *.d
-build/kernel/.f
 *.f
 *.oram
 *.ld
