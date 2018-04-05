@@ -1,0 +1,14 @@
+*.o
+*.d
+build/kernel/.f
+*.f
+*.oram
+*.ld
+*.map
+*.rxe
+*.bin
+implementation.oil
+*.elf
+kernel_id.h
+kernel_cfg.c
+*.sh
