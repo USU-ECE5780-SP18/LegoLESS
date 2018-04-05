@@ -98,6 +98,10 @@ CPU ATMEL_AT91SAM7S256
   TASK MotorControl
   {
     PRIORITY = 3;
+    
+    EVENT = StartMotorEvent;
+    EVENT = StopMotorEvent;
+    
     ACTIVATION = 1;
     SCHEDULE = FULL;
     STACKSIZE = 512;
@@ -106,5 +110,8 @@ CPU ATMEL_AT91SAM7S256
       APPMODE = appmode1;
     };
   };
+  
+  EVENT StartMotorEvent { MASK = AUTO; };
+  EVENT StopMotorEvent { MASK = AUTO; };
   
 };

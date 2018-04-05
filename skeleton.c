@@ -19,18 +19,26 @@ DeclareTask(Display);
 DeclareTask(ReadSensors);
 DeclareTask(MotorControl);
 
+DeclareEvent(StartMotorEvent);
+DeclareEvent(StopMotorEvent);
+
 int cnt = 0;
-U16 av_cnt = 0;
-U16 av_sum = 0;
+U16 light_sum = 0;
+U16 sonar_sum = 0;
+U16 sensor_cnt = 0;
+
+U8 touch_debounce = 0;
 
 //----------------------------------------------------------------------------+
 // nxtOSEK hooks                                                              |
 //----------------------------------------------------------------------------+
 void ecrobot_device_initialize() {
 	ecrobot_init_nxtcolorsensor(COLOR_PORT, NXT_LIGHTSENSOR_NONE);
+	ecrobot_init_sonar_sensor(SONAR_PORT);
 }
 void ecrobot_device_terminate() {
 	ecrobot_term_nxtcolorsensor(COLOR_PORT);
+	ecrobot_term_sonar_sensor(SONAR_PORT);
 }
 void user_1ms_isr_type2() {
 	StatusType ercd;
@@ -54,16 +62,19 @@ TASK(BackgroundAlways) {
 //----------------------------------------------------------------------------+
 TASK(Display) {
 	// Calculate the sum
-	U16 av = av_sum/av_cnt;
-	av_sum = av_cnt = 0;
+	U16 light = light_sum/sensor_cnt;
+	U16 sonar = sonar_sum/sensor_cnt;
+	sonar_sum = light_sum = sensor_cnt = 0;
 	
 	display_clear(0);
 	display_goto_xy(0, 0);
 	display_string("Devin and John\n");
-	display_string("Light sensor:\n    ");
-	display_int(av, 5);
-	display_string("\nClock:\n   ");
+	display_string("Clock:\n   ");
 	display_int(cnt, 7);
+	display_string("\nLight sensor:\n    ");
+	display_int(light, 5);
+	display_string("\nSonar sensor:\n    ");
+	display_int(sonar, 5);
 	display_update();
 
 	TerminateTask();
@@ -76,11 +87,32 @@ TASK(ReadSensors) {
 	// Increment the displayed clock
 	cnt++;
 	
+	// Increment the counter used to average readings in the display task
+	sensor_cnt++;
+	
 	// Read the light sensor
-	av_sum += ecrobot_get_nxtcolorsensor_light(COLOR_PORT);
-	av_cnt++;
+	light_sum += ecrobot_get_nxtcolorsensor_light(COLOR_PORT);
+	
+	// Read the proximity sensor
+	S32 sonar = ecrobot_get_sonar_sensor(SONAR_PORT);
+	sonar_sum += sonar;
+	
+	if (sonar > 7) {
+		SetEvent(MotorControl, StopMotorEvent);
+	}
 	
 	// Read the touch sensor
+	U8 touch = ecrobot_get_touch_sensor(TOUCH_PORT);
+	if (touch != touch_debounce) {
+		if (touch) {
+			SetEvent(MotorControl, StartMotorEvent);
+		}
+		else {
+			SetEvent(MotorControl, StopMotorEvent);
+		}
+		
+		touch_debounce = touch;
+	}
 	
 	TerminateTask();
 }
@@ -88,13 +120,32 @@ TASK(ReadSensors) {
 //----------------------------------------------------------------------------+
 // MotorControl aperiodic task while(1), event-driven, priority 3             |
 //----------------------------------------------------------------------------+
-#define SPEEDRUN
+//#define SPEEDRUN
 TASK(MotorControl) {
 #ifdef SPEEDRUN
 	nxt_motor_set_speed(LEFT_MOTOR, -100, 0);
 	nxt_motor_set_speed(RIGHT_MOTOR, -100, 0);
 #else
-	
+	while(1) {
+		WaitEvent(StartMotorEvent | StopMotorEvent);
+		
+		EventMaskType eMask = 0;
+		GetEvent(MotorControl, &eMask);
+		
+		if (eMask & StartMotorEvent) {
+			ClearEvent(StartMotorEvent);
+			
+			nxt_motor_set_speed(LEFT_MOTOR, -75, 0);
+			nxt_motor_set_speed(RIGHT_MOTOR, -75, 0);
+		}
+		
+		if (eMask & StopMotorEvent) {
+			ClearEvent(StopMotorEvent);
+			
+			nxt_motor_set_speed(LEFT_MOTOR, 0, 1);
+			nxt_motor_set_speed(RIGHT_MOTOR, 0, 1);
+		}
+	}
 #endif
 	TerminateTask();
 }
