@@ -14,82 +14,97 @@ CPU ATMEL_AT91SAM7S256
     USEPARAMETERACCESS = FALSE;
     USERESSCHEDULER = FALSE;
   };
-
+  
   /* Definition of application mode */
   APPMODE appmode1{};
-
-  TASK TestColorSensor
-  {
-    AUTOSTART = FALSE;
-    /*{
-      APPMODE = appmode1;
-    };*/
-    PRIORITY = 4; /* Smaller value means lower priority */
-    ACTIVATION = 1;
-    SCHEDULE = FULL;
-    STACKSIZE = 512; /* Stack size */
-  };
-  
-  TASK DisplayData
-  {
-    AUTOSTART = FALSE;
-    /*{
-      APPMODE = appmode1;
-    };*/
-    PRIORITY = 3; /* Smaller value means lower priority */
-    ACTIVATION = 1;
-    SCHEDULE = FULL;
-    STACKSIZE = 512; /* Stack size */
-  };
-  
-  TASK ControlSensor
-  {
-    AUTOSTART = TRUE
-    {
-      APPMODE = appmode1;
-    };
-    PRIORITY = 1; /* Smaller value means lower priority */
-    ACTIVATION = 1;
-    SCHEDULE = FULL;
-    STACKSIZE = 512; /* Stack size */
-  };
   
   COUNTER SysTimerCnt
   {
     MINCYCLE = 1;
     MAXALLOWEDVALUE = 10000;
-    TICKSPERBASE = 1; /* One tick is equal to 1msec */ 
+    TICKSPERBASE = 1; /* One tick is equal to 1ms */ 
   };
-
-  /* Definition of Task1 execution timing */
-  ALARM cyclic_alarm_task
+  
+  /*-------------------------------------------------------------------------*/
+  /* BackgroundAlways aperiodic task while(1), priority 1                    */
+  /*-------------------------------------------------------------------------*/
+  TASK BackgroundAlways
   {
-    COUNTER = SysTimerCnt;
-    ACTION = ACTIVATETASK
-    {
-      TASK = TestColorSensor;
-    };
+    PRIORITY = 1; /* Smaller value means lower priority */
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
     AUTOSTART = TRUE
     {
-      ALARMTIME = 1;
-      CYCLETIME = 100; /* Task1 is executed every 50msec */
       APPMODE = appmode1;
     };
   };
   
-  /* Definition of Task1 execution timing */
-  ALARM cyclic_alarm_display
+  /*-------------------------------------------------------------------------*/
+  /* Display periodic every 500ms, priority 2                                */
+  /*-------------------------------------------------------------------------*/
+  TASK Display
+  {
+    PRIORITY = 2;
+    AUTOSTART = FALSE;
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
+  };
+  ALARM cyclic_display
   {
     COUNTER = SysTimerCnt;
     ACTION = ACTIVATETASK
     {
-      TASK = DisplayData;
+      TASK = Display;
     };
     AUTOSTART = TRUE
     {
       ALARMTIME = 1;
-      CYCLETIME = 500; /* Task1 is executed every 50msec */
+      CYCLETIME = 500; /* Every 500ms */
       APPMODE = appmode1;
     };
   };
+  
+  /*-------------------------------------------------------------------------*/
+  /* ReadSensors periodic every 10ms, priority 4                             */
+  /*-------------------------------------------------------------------------*/
+  TASK ReadSensors
+  {
+    PRIORITY = 4;
+    AUTOSTART = FALSE;
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
+  };
+  ALARM cyclic_read_sensors
+  {
+    COUNTER = SysTimerCnt;
+    ACTION = ACTIVATETASK
+    {
+      TASK = ReadSensors;
+    };
+    AUTOSTART = TRUE
+    {
+      ALARMTIME = 1;
+      CYCLETIME = 10; /* Every 10ms */
+      APPMODE = appmode1;
+    };
+  };
+  
+  /*-------------------------------------------------------------------------*/
+  /* MotorControl aperiodic task while(1), event-driven, priority 3          */
+  /*-------------------------------------------------------------------------*/
+  TASK MotorControl
+  {
+    PRIORITY = 3;
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
+    AUTOSTART = TRUE
+    {
+      APPMODE = appmode1;
+    };
+  };
+  
 };
