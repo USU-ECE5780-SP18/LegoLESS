@@ -53,25 +53,25 @@ CPU ATMEL_AT91SAM7S256
   };
   ALARM cyclic_display
   {
+    AUTOSTART = TRUE
+    {
+      CYCLETIME = 500;
+      ALARMTIME = 1;
+      APPMODE = appmode1;
+    };
     COUNTER = SysTimerCnt;
     ACTION = ACTIVATETASK
     {
       TASK = Display;
     };
-    AUTOSTART = TRUE
-    {
-      ALARMTIME = 1;
-      CYCLETIME = 500; /* Every 500ms */
-      APPMODE = appmode1;
-    };
   };
   
   /*-------------------------------------------------------------------------*/
-  /* ReadSensors periodic every 10ms, priority 4                             */
+  /* ReadSensors periodic every 50ms, priority 3                             */
   /*-------------------------------------------------------------------------*/
   TASK ReadSensors
   {
-    PRIORITY = 4;
+    PRIORITY = 3;
     AUTOSTART = FALSE;
     ACTIVATION = 1;
     SCHEDULE = FULL;
@@ -79,27 +79,47 @@ CPU ATMEL_AT91SAM7S256
   };
   ALARM cyclic_read_sensors
   {
+    AUTOSTART = TRUE
+    {
+      CYCLETIME = 50;
+      ALARMTIME = 1;
+      APPMODE = appmode1;
+    };
     COUNTER = SysTimerCnt;
     ACTION = ACTIVATETASK
     {
       TASK = ReadSensors;
     };
+  };
+  
+  /*-------------------------------------------------------------------------*/
+  /* Trigger a steering event every 10ms                                     */
+  /*-------------------------------------------------------------------------*/
+  ALARM cyclic_adjust_steer
+  {
     AUTOSTART = TRUE
     {
+      CYCLETIME = 10;
       ALARMTIME = 1;
-      CYCLETIME = 10; /* Every 10ms */
       APPMODE = appmode1;
+    };
+    COUNTER = SysTimerCnt;
+    ACTION = SETEVENT
+    {
+      TASK = MotorControl;
+      EVENT = SteerMotorEvent;
     };
   };
   
   /*-------------------------------------------------------------------------*/
-  /* MotorControl aperiodic task while(1), event-driven, priority 3          */
+  /* MotorControl aperiodic task while(1), event-driven, priority 4          */
   /*-------------------------------------------------------------------------*/
   TASK MotorControl
   {
-    PRIORITY = 3;
+    PRIORITY = 4;
     
-    EVENT = StartMotorEvent;
+    EVENT = AdjustMotorEvent;
+    EVENT = SteerMotorEvent;
     EVENT = StopMotorEvent;
     
     ACTIVATION = 1;
@@ -111,7 +131,9 @@ CPU ATMEL_AT91SAM7S256
     };
   };
   
-  EVENT StartMotorEvent { MASK = AUTO; };
+  EVENT SteerMotorEvent { MASK = AUTO; };
+  
   EVENT StopMotorEvent { MASK = AUTO; };
+  EVENT AdjustMotorEvent { MASK = AUTO; };
   
 };
