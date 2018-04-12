@@ -143,28 +143,28 @@ TASK(ReadSensors) {
 	sonar_sum += sonar;
 	
 	// Read the angle
-	int angle = nxt_motor_get_count(RIGHT_MOTOR);
+	int angle = nxt_motor_get_count(STEER_MOTOR);
 	angle_sum += angle;
 	
 	// FSM Logic
-	switch (cnt % 120) {
+	switch (cnt % 160) {
 		case 1:
 			steer = STRAIGHT;
-			//speed = FORWARD_FULL;
-			//SetEvent(MotorControl, AdjustMotorEvent);
+			speed = FORWARD_FULL;
+			SetEvent(MotorControl, AdjustMotorEvent);
 			break;
 		case 40:
 			steer = LEFT_HARD;
-			//speed = FORWARD_HALF;
-			//SetEvent(MotorControl, AdjustMotorEvent);
+			speed = FORWARD_HALF;
+			SetEvent(MotorControl, AdjustMotorEvent);
 			break;
 		case 80:
 			steer = RIGHT_HARD;
 			break;
-		//case 60:
-			//steer = STRAIGHT;
-			//SetEvent(MotorControl, StopMotorEvent);
-			//break;
+		case 120:
+			steer = STRAIGHT;
+			SetEvent(MotorControl, StopMotorEvent);
+			break;
 	}
 	
 	
