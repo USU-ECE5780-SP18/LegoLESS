@@ -112,11 +112,11 @@ CPU ATMEL_AT91SAM7S256
   };
   
   /*-------------------------------------------------------------------------*/
-  /* MotorControl aperiodic task while(1), event-driven, priority 4          */
+  /* MotorControl aperiodic task while(1), event-driven, priority 5          */
   /*-------------------------------------------------------------------------*/
   TASK MotorControl
   {
-    PRIORITY = 4;
+    PRIORITY = 5;
     
     EVENT = AdjustMotorEvent;
     EVENT = SteerMotorEvent;
@@ -135,5 +135,33 @@ CPU ATMEL_AT91SAM7S256
   
   EVENT StopMotorEvent { MASK = AUTO; };
   EVENT AdjustMotorEvent { MASK = AUTO; };
+  
+  /*-------------------------------------------------------------------------*/
+  /* LineFollower aperiodic task while(1), event-driven, priority 4          */
+  /*-------------------------------------------------------------------------*/
+  TASK LineFollower
+  {
+    PRIORITY = 4;
+    
+    EVENT = LineLostEvent;
+    EVENT = LineFoundEvent;
+    EVENT = TurnCompleteEvent;
+    EVENT = ObjectDetectedEvent;
+    EVENT = DriveCompleteEvent;
+    
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
+    AUTOSTART = TRUE
+    {
+      APPMODE = appmode1;
+    };
+  };
+  
+  EVENT LineLostEvent { MASK = AUTO; };
+  EVENT LineFoundEvent { MASK = AUTO; };
+  EVENT TurnCompleteEvent { MASK = AUTO; };
+  EVENT ObjectDetectedEvent { MASK = AUTO; };
+  EVENT DriveCompleteEvent { MASK = AUTO; };
   
 };

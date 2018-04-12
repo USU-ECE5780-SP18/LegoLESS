@@ -18,10 +18,17 @@ DeclareTask(BackgroundAlways);
 DeclareTask(Display);
 DeclareTask(ReadSensors);
 DeclareTask(MotorControl);
+DeclareTask(LineFollower);
 
 DeclareEvent(AdjustMotorEvent);
 DeclareEvent(SteerMotorEvent);
 DeclareEvent(StopMotorEvent);
+
+DeclareEvent(LineFoundEvent);
+DeclareEvent(LineLostEvent);
+DeclareEvent(ObjectDetectedEvent);
+DeclareEvent(TurnCompleteEvent);
+DeclareEvent(DriveCompleteEvent);
 
 // Global variables used to calculate averages that are displayed
 int cnt = 0;
@@ -30,27 +37,25 @@ U16 light_sum = 0;
 U16 sonar_sum = 0;
 U16 sensor_cnt = 0;
 
+bool on_line = 0;
+bool obstacle = 0;
+
 // Useful enums for managing the logic of the vehicle
-enum COURSE_FSM {
-	START           = 0,
-	FIRST_CURVE     = 1,
-	FIRST_DOTTED    = 2,
-	FIRST_CORNER    = 3,
-	OBSTACLE        = 4,
-	SECOND_CORNER   = 5,
-	SECOND_DOTTED   = 6,
-	SECOND_CURVE    = 7,
-	FINISH          = 8,
+enum DRIVE_DIRECTION {
+	FORWARD = -1,
+	REVERSE = 1,
 };
 
 enum SPEED {
-	FORWARD_FULL  = -100,
-	FORWARD_HALF  = -75,
-	FORWARD_STOP  = -50,
-	COMPLETE_STOP = 0,
-	REVERSE_STOP  = 50,
-	REVERSE_HALF  = 75,
-	REVERSE_FULL  = 100,
+	FASTEST = 100,
+	SLOWEST = 60,
+	STOPPED = 0,
+	
+	SPEED_0 = 60,
+	SPEED_1 = 70,
+	SPEED_2 = 80,
+	SPEED_3 = 90,
+	SPEED_4 = 100,
 };
 
 enum STEERING_ANGLE {
@@ -62,8 +67,9 @@ enum STEERING_ANGLE {
 };
 
 // A controls set by the sensor task and read by the motor task
-int speed = FORWARD_HALF;
-int steer = 0;
+volatile int velocity = FORWARD * SPEED_0;
+volatile int steer = 0;
+volatile unsigned int drive = 0;
 
 //----------------------------------------------------------------------------+
 // nxtOSEK hooks                                                              |
@@ -75,9 +81,9 @@ void ecrobot_device_initialize() {
 void ecrobot_device_terminate() {
 	ecrobot_term_nxtcolorsensor(COLOR_PORT);
 	ecrobot_term_sonar_sensor(SONAR_PORT);
-	nxt_motor_set_speed(LEFT_MOTOR, COMPLETE_STOP, 1);
-	nxt_motor_set_speed(RIGHT_MOTOR, COMPLETE_STOP, 1);
-	nxt_motor_set_speed(STEER_MOTOR, COMPLETE_STOP, 1);
+	nxt_motor_set_speed(LEFT_MOTOR, STOPPED, 1);
+	nxt_motor_set_speed(RIGHT_MOTOR, STOPPED, 1);
+	nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
 }
 void user_1ms_isr_type2() {
 	StatusType ercd;
@@ -140,6 +146,7 @@ TASK(ReadSensors) {
 	
 	// Read the proximity sensor
 	S32 sonar = ecrobot_get_sonar_sensor(SONAR_PORT);
+	//sonar = ecrobot_get_sonar_sensor(SONAR_PORT);
 	sonar_sum += sonar;
 	
 	// Read the angle
@@ -147,40 +154,61 @@ TASK(ReadSensors) {
 	angle_sum += angle;
 	
 	// FSM Logic
-	switch (cnt % 160) {
+	/*switch (cnt % 200) {
 		case 1:
+			velocity = FORWARD * SPEED_0;
+			SetEvent(MotorControl, AdjustMotorEvent);
+
 			steer = STRAIGHT;
-			speed = FORWARD_FULL;
-			SetEvent(MotorControl, AdjustMotorEvent);
 			break;
-		case 40:
-			steer = LEFT_HARD;
-			speed = FORWARD_HALF;
-			SetEvent(MotorControl, AdjustMotorEvent);
-			break;
-		case 80:
+		case 41:
 			steer = RIGHT_HARD;
 			break;
-		case 120:
+		case 61:
+			steer = LEFT_HARD;
+			break;
+		case 81:
 			steer = STRAIGHT;
+			break;
+		case 121:
+			steer = LEFT_HARD;
+			break;
+		case 141:
+			steer = RIGHT_HARD;
+			break;
+		case 161:
+			steer = STRAIGHT;
+
 			SetEvent(MotorControl, StopMotorEvent);
 			break;
+	}*/
+	
+	if (light < 250) {
+		if (!on_line) {
+			on_line = true;
+			SetEvent(LineFollower, LineFoundEvent);
+		}
+	}
+	else if (on_line) {
+		on_line = false;
+		SetEvent(LineFollower, LineLostEvent);
 	}
 	
-	
-	
-	
-	//if (light < 250) {
-	//if (sonar < 30) {
-	
-	//SetEvent(MotorControl, AdjustMotorEvent);
-	//SetEvent(MotorControl, StopMotorEvent);
+	if (sonar < 30) {
+		if (!obstacle) {
+			obstacle = true;
+			SetEvent(LineFollower, ObjectDetectedEvent);
+		}
+	}
+	else if (obstacle) {
+		obstacle = false;
+	}
 	
 	TerminateTask();
 }
 
 //----------------------------------------------------------------------------+
-// MotorControl aperiodic task while(1), event-driven, priority 4             |
+// MotorControl aperiodic task while(1), event-driven, priority 5             |
 //----------------------------------------------------------------------------+
 TASK(MotorControl) {
 	while(1) {
@@ -192,33 +220,133 @@ TASK(MotorControl) {
 		if (eMask & SteerMotorEvent) {
 			ClearEvent(SteerMotorEvent);
 			
-			int angle = nxt_motor_get_count(STEER_MOTOR);
-			int delta_angle = steer - angle;
-			
+			int current_angle = nxt_motor_get_count(STEER_MOTOR);
+			int delta_angle = steer - current_angle;
 			int direction = delta_angle < 0 ? -1 : 1;
 			delta_angle *= direction;
 			
 			if (delta_angle == 0) {
-				nxt_motor_set_speed(STEER_MOTOR, COMPLETE_STOP, 1);
+				nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
 			}
 			else {
 				int speed = delta_angle > 15 ? 75 : 50;
 				nxt_motor_set_speed(STEER_MOTOR, speed * direction, 0);
+			}
+			
+			if (drive > 0) {
+				if (--drive == 0) {
+					SetEvent(LineFollower, DriveCompleteEvent);
+				}
 			}
 		}
 		
 		if (eMask & AdjustMotorEvent) {
 			ClearEvent(AdjustMotorEvent);
 			
-			nxt_motor_set_speed(LEFT_MOTOR, speed, 0);
-			nxt_motor_set_speed(RIGHT_MOTOR, speed, 0);
+			nxt_motor_set_speed(LEFT_MOTOR, velocity, 0);
+			nxt_motor_set_speed(RIGHT_MOTOR, velocity, 0);
 		}
 		
 		if (eMask & StopMotorEvent) {
 			ClearEvent(StopMotorEvent);
 			
-			nxt_motor_set_speed(LEFT_MOTOR, COMPLETE_STOP, 1);
-			nxt_motor_set_speed(RIGHT_MOTOR, COMPLETE_STOP, 1);
+			nxt_motor_set_speed(LEFT_MOTOR, STOPPED, 1);
+			nxt_motor_set_speed(RIGHT_MOTOR, STOPPED, 1);
+		}
+	}
+	
+	TerminateTask();
+}
+
+enum COURSE_FSM {
+	START           = 0,
+	FIRST_CURVE     = 1,
+	FIRST_DOTTED    = 2,
+	FIRST_CORNER    = 3,
+	OBSTACLE        = 4,
+	SECOND_CORNER   = 5,
+	SECOND_DOTTED   = 6,
+	SECOND_CURVE    = 7,
+	FINISH          = 8,
+};
+
+//----------------------------------------------------------------------------+
+// LineFollower aperiodic task while(1), event-driven, priority 4             |
+// Assumptions:                                                               |
+//   1: The wheels are straight to begin with                                 |
+//   2: The car is over the line to begin with (and relatively straight)      |
+//----------------------------------------------------------------------------+
+TASK(LineFollower) {
+	int course_state = START;
+	
+	while (1) {
+		drive = 10;
+		velocity = FORWARD * SPEED_3;
+		SetEvent(MotorControl, AdjustMotorEvent);
+		
+		WaitEvent(DriveCompleteEvent);
+		ClearEvent(DriveCompleteEvent);
+		
+		SetEvent(MotorControl, StopMotorEvent);
+		
+		drive = 30;
+		WaitEvent(DriveCompleteEvent);
+		ClearEvent(DriveCompleteEvent);
+	}
+	
+	TerminateTask();
+	
+	while(1) {
+		WaitEvent(ObjectDetectedEvent | TurnCompleteEvent | LineFoundEvent | LineLostEvent);
+		
+		EventMaskType eMask = 0;
+		GetEvent(LineFollower, &eMask);
+		
+		if (eMask & ObjectDetectedEvent) {
+			ClearEvent(ObjectDetectedEvent);
+			SetEvent(MotorControl, StopMotorEvent);
+		}
+		
+		if (eMask & TurnCompleteEvent) {
+			ClearEvent(TurnCompleteEvent);
+		}
+		
+		if (eMask & LineFoundEvent) {
+			ClearEvent(LineFoundEvent);
+			
+			velocity = FORWARD * SPEED_0;
+			SetEvent(MotorControl, AdjustMotorEvent);
+		}
+		
+		if (eMask & LineLostEvent) {
+			//Perform line finding algorithm
+			ClearEvent(LineLostEvent);
+			
+			// Make an in-place turn
+			SetEvent(MotorControl, StopMotorEvent);
+			
+			// clear existing events so we in fact wait for the upcoming turn to finish
+			ClearEvent(TurnCompleteEvent);
+			steer = RIGHT_SOFT;
+			
+			// Wait for the turn
+			WaitEvent(TurnCompleteEvent);
+			ClearEvent(TurnCompleteEvent);
+
+			// clear existing events so we in fact drive for the desired time
+			drive = 0;
+			ClearEvent(DriveCompleteEvent);
+			
+			// drive for 50ms
+			drive = 5;
+			SetEvent(MotorControl, AdjustMotorEvent);
+			
+			// Wait for the drive to finish
+			WaitEvent(DriveCompleteEvent);
+			ClearEvent(DriveCompleteEvent);
+			
+			SetEvent(MotorControl, StopMotorEvent);
+			
 		}
 	}
 	
