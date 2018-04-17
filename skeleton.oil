@@ -81,7 +81,7 @@ CPU ATMEL_AT91SAM7S256
   {
     AUTOSTART = TRUE
     {
-      CYCLETIME = 50;
+      CYCLETIME = 10;
       ALARMTIME = 1;
       APPMODE = appmode1;
     };
@@ -143,11 +143,11 @@ CPU ATMEL_AT91SAM7S256
   {
     PRIORITY = 4;
     
-    EVENT = LineLostEvent;
-    EVENT = LineFoundEvent;
+    EVENT = LineUpdateEvent;
     EVENT = TurnCompleteEvent;
     EVENT = ObjectDetectedEvent;
     EVENT = DriveCompleteEvent;
+	EVENT = SteerCompleteEvent;
     
     ACTIVATION = 1;
     SCHEDULE = FULL;
@@ -158,10 +158,10 @@ CPU ATMEL_AT91SAM7S256
     };
   };
   
-  EVENT LineLostEvent { MASK = AUTO; };
-  EVENT LineFoundEvent { MASK = AUTO; };
+  EVENT LineUpdateEvent { MASK = AUTO; };
   EVENT TurnCompleteEvent { MASK = AUTO; };
   EVENT ObjectDetectedEvent { MASK = AUTO; };
   EVENT DriveCompleteEvent { MASK = AUTO; };
+  EVENT SteerCompleteEvent { MASK = AUTO; };
   
 };

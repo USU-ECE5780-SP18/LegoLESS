@@ -6,7 +6,7 @@
 
 /* You can define the ports used here */
 #define COLOR_PORT NXT_PORT_S1
-#define SONAR_PORT NXT_PORT_S2
+#define SONAR_PORT NXT_PORT_S4
 
 #define STEER_MOTOR NXT_PORT_A
 #define  LEFT_MOTOR NXT_PORT_B
@@ -24,11 +24,11 @@ DeclareEvent(AdjustMotorEvent);
 DeclareEvent(SteerMotorEvent);
 DeclareEvent(StopMotorEvent);
 
-DeclareEvent(LineFoundEvent);
-DeclareEvent(LineLostEvent);
+DeclareEvent(LineUpdateEvent);
 DeclareEvent(ObjectDetectedEvent);
 DeclareEvent(TurnCompleteEvent);
 DeclareEvent(DriveCompleteEvent);
+DeclareEvent(SteerCompleteEvent);
 
 // Global variables used to calculate averages that are displayed
 int cnt = 0;
@@ -37,8 +37,9 @@ U16 light_sum = 0;
 U16 sonar_sum = 0;
 U16 sensor_cnt = 0;
 
-bool on_line = 0;
-bool obstacle = 0;
+bool on_line = true;
+bool obstacle = false;
+U32 line_rev_count = 0;
 
 // Useful enums for managing the logic of the vehicle
 enum DRIVE_DIRECTION {
@@ -52,6 +53,7 @@ enum SPEED {
 	STOPPED = 0,
 	
 	SPEED_0 = 60,
+	SPEED_0_5 = 65,
 	SPEED_1 = 70,
 	SPEED_2 = 80,
 	SPEED_3 = 90,
@@ -68,8 +70,11 @@ enum STEERING_ANGLE {
 
 // A controls set by the sensor task and read by the motor task
 volatile int velocity = FORWARD * SPEED_0;
-volatile int steer = 0;
-volatile unsigned int drive = 0;
+
+volatile bool steer_signal_event = false;
+volatile int steer_target = 0;
+
+volatile unsigned int drive_counter = 0;
 
 //----------------------------------------------------------------------------+
 // nxtOSEK hooks                                                              |
@@ -122,7 +127,7 @@ TASK(Display) {
 	display_string("\nSonar: ");
 	display_int(sonar, 7);
 	display_string("\nSteer: ");
-	display_int(steer, 7);
+	display_int(steer_target, 7);
 	display_string("\nAngle: ");
 	display_int(angle, 7);
 	display_update();
@@ -153,45 +158,16 @@ TASK(ReadSensors) {
 	int angle = nxt_motor_get_count(STEER_MOTOR);
 	angle_sum += angle;
 	
-	// FSM Logic
-	/*switch (cnt % 200) {
-		case 1:
-			velocity = FORWARD * SPEED_0;
-			SetEvent(MotorControl, AdjustMotorEvent);
-
-			steer = STRAIGHT;
-			break;
-		case 41:
-			steer = RIGHT_HARD;
-			break;
-		case 61:
-			steer = LEFT_HARD;
-			break;
-		case 81:
-			steer = STRAIGHT;
-			break;
-		case 121:
-			steer = LEFT_HARD;
-			break;
-		case 141:
-			steer = RIGHT_HARD;
-			break;
-		case 161:
-			steer = STRAIGHT;
-
-			SetEvent(MotorControl, StopMotorEvent);
-			break;
-	}*/
-	
 	if (light < 250) {
+		line_rev_count = nxt_motor_get_count(LEFT_MOTOR);
 		if (!on_line) {
 			on_line = true;
-			SetEvent(LineFollower, LineFoundEvent);
+			SetEvent(LineFollower, LineUpdateEvent);
 		}
 	}
 	else if (on_line) {
 		on_line = false;
-		SetEvent(LineFollower, LineLostEvent);
+		SetEvent(LineFollower, LineUpdateEvent);
 	}
 	
 	if (sonar < 30) {
@@ -221,20 +197,29 @@ TASK(MotorControl) {
 			ClearEvent(SteerMotorEvent);
 			
 			int current_angle = nxt_motor_get_count(STEER_MOTOR);
-			int delta_angle = steer - current_angle;
+			int delta_angle = steer_target - current_angle;
 			int direction = delta_angle < 0 ? -1 : 1;
 			delta_angle *= direction;
 			
+			// Signal that steering is complete
 			if (delta_angle == 0) {
 				nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
+				
+				if (steer_signal_event) {
+					steer_signal_event = false;
+					SetEvent(LineFollower, SteerCompleteEvent);
+				}
 			}
+			
+			// Adjust the steering motor
 			else {
 				int speed = delta_angle > 15 ? 75 : 50;
 				nxt_motor_set_speed(STEER_MOTOR, speed * direction, 0);
 			}
 			
-			if (drive > 0) {
-				if (--drive == 0) {
+			// Signal the drive_counter timer when completed 
+			if (drive_counter > 0) {
+				if (--drive_counter == 0) {
 					SetEvent(LineFollower, DriveCompleteEvent);
 				}
 			}
@@ -271,83 +256,100 @@ enum COURSE_FSM {
 };
 
 //----------------------------------------------------------------------------+
+// Steer: Does an in-place turn and returns out when finished turning         |
+//----------------------------------------------------------------------------+
+inline void Steer(int angle) {
+	// Stop to simplify logic (should be a no-op but safety first)
+	SetEvent(MotorControl, StopMotorEvent);
+	
+	// Clear any previous signal (should be a no-op but safety first)
+	ClearEvent(SteerCompleteEvent);
+	
+	steer_target = angle;
+	steer_signal_event = true;
+	
+	WaitEvent(SteerCompleteEvent);
+	ClearEvent(SteerCompleteEvent);
+}
+
+//----------------------------------------------------------------------------+
+// DriveForTime: Drive until finding the line or hitting the timeout          |
+// returns true: If the line is found before the time runs out                |
+//----------------------------------------------------------------------------+
+inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
+	// Clear any previous driving command (should be a no-op but safety first)
+	drive_counter = 0;
+	ClearEvent(DriveCompleteEvent);
+	
+	// Set the global variables to drive_counter for the speed and duration desired
+	velocity = speed * direction;
+	drive_counter = timeout;
+	
+	// Get the motor's going
+	SetEvent(MotorControl, AdjustMotorEvent);
+	
+	// Wait for the timer or line found
+	while (1) {
+		WaitEvent(DriveCompleteEvent | LineUpdateEvent);
+		
+		EventMaskType eMask = 0;
+		GetEvent(LineFollower, &eMask);
+		
+		if (eMask & LineUpdateEvent && !on_line) {
+			ClearEvent(LineUpdateEvent);
+			continue; 
+		}
+		
+		// Stop now that we've hit our timer or found the line
+		SetEvent(MotorControl, StopMotorEvent);
+		
+		drive_counter = 0;
+		ClearEvent(DriveCompleteEvent);
+		ClearEvent(LineUpdateEvent);
+		
+		return eMask & LineUpdateEvent ? true : false;
+	}
+}
+
+//----------------------------------------------------------------------------+
 // LineFollower aperiodic task while(1), event-driven, priority 4             |
 // Assumptions:                                                               |
 //   1: The wheels are straight to begin with                                 |
 //   2: The car is over the line to begin with (and relatively straight)      |
 //----------------------------------------------------------------------------+
 TASK(LineFollower) {
-	int course_state = START;
+	//int course_state = START;
+	
+	velocity = SPEED_0_5 * FORWARD;
+	SetEvent(MotorControl, AdjustMotorEvent);
 	
 	while (1) {
-		drive = 10;
-		velocity = FORWARD * SPEED_3;
-		SetEvent(MotorControl, AdjustMotorEvent);
+		WaitEvent(LineUpdateEvent);
+		ClearEvent(LineUpdateEvent);
 		
-		WaitEvent(DriveCompleteEvent);
-		ClearEvent(DriveCompleteEvent);
-		
-		SetEvent(MotorControl, StopMotorEvent);
-		
-		drive = 30;
-		WaitEvent(DriveCompleteEvent);
-		ClearEvent(DriveCompleteEvent);
+		if (!on_line) {
+			DriveForTime(SPEED_0_5, FORWARD, 500);
+		}
 	}
 	
 	TerminateTask();
-	
-	while(1) {
-		WaitEvent(ObjectDetectedEvent | TurnCompleteEvent | LineFoundEvent | LineLostEvent);
+	return;
+	while (1) {
+		Steer(LEFT_SOFT);
+		DriveForTime(SPEED_2, FORWARD, 10);
+		DriveForTime(STOPPED, FORWARD, 20);
 		
-		EventMaskType eMask = 0;
-		GetEvent(LineFollower, &eMask);
+		Steer(STRAIGHT);
+		DriveForTime(SPEED_2, FORWARD, 10);
+		DriveForTime(STOPPED, FORWARD, 20);
 		
-		if (eMask & ObjectDetectedEvent) {
-			ClearEvent(ObjectDetectedEvent);
-			SetEvent(MotorControl, StopMotorEvent);
-		}
+		Steer(RIGHT_SOFT);
+		DriveForTime(SPEED_2, FORWARD, 10);
+		DriveForTime(STOPPED, FORWARD, 20);
 		
-		if (eMask & TurnCompleteEvent) {
-			ClearEvent(TurnCompleteEvent);
-		}
-		
-		if (eMask & LineFoundEvent) {
-			ClearEvent(LineFoundEvent);
-			
-			velocity = FORWARD * SPEED_0;
-			SetEvent(MotorControl, AdjustMotorEvent);
-		}
-		
-		if (eMask & LineLostEvent) {
-			//Perform line finding algorithm
-			ClearEvent(LineLostEvent);
-			
-			// Make an in-place turn
-			SetEvent(MotorControl, StopMotorEvent);
-			
-			// clear existing events so we in fact wait for the upcoming turn to finish
-			ClearEvent(TurnCompleteEvent);
-			steer = RIGHT_SOFT;
-			
-			// Wait for the turn
-			WaitEvent(TurnCompleteEvent);
-			ClearEvent(TurnCompleteEvent);
-
-			// clear existing events so we in fact drive for the desired time
-			drive = 0;
-			ClearEvent(DriveCompleteEvent);
-			
-			// drive for 50ms
-			drive = 5;
-			SetEvent(MotorControl, AdjustMotorEvent);
-			
-			// Wait for the drive to finish
-			WaitEvent(DriveCompleteEvent);
-			ClearEvent(DriveCompleteEvent);
-			
-			SetEvent(MotorControl, StopMotorEvent);
-			
-		}
+		Steer(STRAIGHT);
+		DriveForTime(SPEED_2, FORWARD, 10);
+		DriveForTime(STOPPED, FORWARD, 20);
 	}
 	
 	TerminateTask();
