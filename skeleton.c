@@ -106,7 +106,7 @@ void user_1ms_isr_type2() {
 }
 
 //----------------------------------------------------------------------------+
-// BackgroundAlways aperiodic task while(1), priority 1                       |
+// BackgroundAlways - aperiodic task while(1), priority 1                     |
 //----------------------------------------------------------------------------+
 TASK(BackgroundAlways) {
 	while(1) {
@@ -115,7 +115,7 @@ TASK(BackgroundAlways) {
 }
 
 //----------------------------------------------------------------------------+
-// Display periodic every 500ms, priority 2                                   |
+// Display - periodic every 500ms, priority 2                                 |
 //----------------------------------------------------------------------------+
 TASK(Display) {
 	// Calculate the sum
@@ -162,7 +162,7 @@ inline void RecordStat(DispStat* stat, int val) {
 }
 
 //----------------------------------------------------------------------------+
-// TestColorSensor periodic every 50ms, priority 3                            |
+// ReadSensors - periodic every 50ms, priority 3                              |
 //----------------------------------------------------------------------------+
 TASK(ReadSensors) {
 	// Read the light sensor
@@ -331,18 +331,23 @@ inline bool TestAngle(int seek_angle, int timeout) {
 	return false;
 }
 
-bool BumpFinder(int* angle, int dir1, int bump, int timeout) {
-	int iteration = 0;
+//----------------------------------------------------------------------------+
+// SymmetricFinder:                                                           |
+// Tests increasing multiples of `bump` on alternating sides of `angle`       |
+// returns true: If the line is found                                         |
+//----------------------------------------------------------------------------+
+bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
+	int step = 0;
 	int dir2 = -1 * dir1;
 	bool hard1 = false;
 	bool hard2 = false;
 	int seek_angle;
 	
 	while (1) {
-		++iteration;
+		++step;
 		
 		if (!hard1) {
-			seek_angle = *angle + iteration * dir1 * bump;
+			seek_angle = *angle + step * dir1 * bump;
 			vector v = GetVector(seek_angle);
 			if (v.mag >= HARD) {
 				seek_angle = dir1 * HARD;
@@ -356,7 +361,7 @@ bool BumpFinder(int* angle, int dir1, int bump, int timeout) {
 		}
 		
 		if (!hard2) {
-			seek_angle = *angle + iteration * dir2 * bump;
+			seek_angle = *angle + step * dir2 * bump;
 			vector v = GetVector(seek_angle);
 			if (v.mag >= HARD) {
 				seek_angle = dir2 * HARD; 
@@ -370,7 +375,7 @@ bool BumpFinder(int* angle, int dir1, int bump, int timeout) {
 		}
 		
 		if (hard1 && hard2) {
-			return 0;
+			return false;
 		}
 	}
 }
@@ -421,7 +426,7 @@ int course_prediction[15] = {
 };
 
 //----------------------------------------------------------------------------+
-// LineFollower aperiodic task while(1), event-driven, priority 4             |
+// LineFollower - aperiodic task while(1), event-driven, priority 4           |
 // Assumptions:                                                               |
 //   1: The wheels are straight to begin with                                 |
 //   2: The car is over the line to begin with (and relatively straight)      |
@@ -434,7 +439,7 @@ TASK(LineFollower) {
 	while (1) {
 		FollowLine(SPEED_4, FORWARD, 0);
 		
-		if (BumpFinder(&angle_next, LEFT, BUMP, 30)) {
+		if (SymmetricFinder(&angle_next, LEFT, BUMP, 30)) {
 			angle = angle_next;
 		}
 		
@@ -445,7 +450,7 @@ TASK(LineFollower) {
 }
 
 //----------------------------------------------------------------------------+
-// MotorControl aperiodic task while(1), event-driven, priority 5             |
+// MotorControl - aperiodic task while(1), event-driven, priority 5           |
 //----------------------------------------------------------------------------+
 TASK(MotorControl) {
 	while(1) {
