@@ -338,7 +338,7 @@ inline bool TestAngle(int seek_angle, int timeout) {
 //----------------------------------------------------------------------------+
 bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
 	int step = 0;
-	int dir2 = -1 * dir1;
+	int dir2 = -dir1;
 	bool hard1 = false;
 	bool hard2 = false;
 	int seek_angle;
@@ -375,6 +375,38 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
 		}
 		
 		if (hard1 && hard2) {
+			return false;
+		}
+	}
+}
+
+//----------------------------------------------------------------------------+
+// AsymmetricFinder                                                           |
+// Tests increasing multiples of `bump` on the given side of `angle`          |
+// returns true: If the line is found                                         |
+//----------------------------------------------------------------------------+
+bool AsymmetricFinder(int* angle, int dir, int bump, int timeout) {
+	int step = 0;
+	bool hard = false;
+	int seek_angle;
+	
+	while (1) {
+		++step;
+		
+		if (!hard) {
+			seek_angle = *angle + step * dir * bump;
+			vector v = GetVector(seek_angle);
+			if (v.mag >= HARD) {
+				seek_angle = dir * HARD;
+				hard = true;
+			}
+			
+			if (TestAngle(seek_angle, timeout)) {
+				*angle = seek_angle;
+				return true;
+			}
+		}
+		else {
 			return false;
 		}
 	}
