@@ -12,6 +12,13 @@
 #define  LEFT_MOTOR NXT_PORT_B
 #define RIGHT_MOTOR NXT_PORT_C
 
+typedef struct {
+	int min;
+	int max;
+	int sum;
+	int	cnt;
+} DispStat;
+
 DeclareCounter(SysTimerCnt);
 
 DeclareTask(BackgroundAlways);
@@ -31,11 +38,10 @@ DeclareEvent(DriveCompleteEvent);
 DeclareEvent(SteerCompleteEvent);
 
 // Global variables used to calculate averages that are displayed
-int cnt = 0;
-int angle_sum = 0;
-U16 light_sum = 0;
-U16 sonar_sum = 0;
-U16 sensor_cnt = 0;
+DispStat steer = { 0 };
+DispStat drive = { 0 };
+DispStat light = { 0 };
+DispStat sonar = { 0 };
 
 bool on_line = true;
 bool obstacle = false;
@@ -112,54 +118,64 @@ TASK(BackgroundAlways) {
 //----------------------------------------------------------------------------+
 TASK(Display) {
 	// Calculate the sum
-	int angle = angle_sum / sensor_cnt;
-	U16 light = light_sum / sensor_cnt;
-	U16 sonar = sonar_sum / sensor_cnt;
-	angle_sum = light_sum = sonar_sum = sensor_cnt = 0;
+	int steer_avg = steer.sum / steer.cnt;
+	int drive_avg = drive.sum / drive.cnt;
+	int light_avg = light.sum / light.cnt;
+	int sonar_avg = sonar.sum / sonar.cnt;
+	steer.cnt = drive.cnt = light.cnt = sonar.cnt = 0;
 	
 	display_clear(0);
 	display_goto_xy(0, 0);
 	display_string("Devin and John");
-	display_string("\nClock: ");
-	display_int(cnt, 7);
 	display_string("\nLight: ");
-	display_int(light, 7);
+	display_int(light_avg, 7);
 	display_string("\nSonar: ");
-	display_int(sonar, 7);
+	display_int(sonar_avg, 7);
 	display_string("\nSteer: ");
-	display_int(steer_target, 7);
-	display_string("\nAngle: ");
-	display_int(angle, 7);
+	display_int(steer_avg, 7);
+	display_string("\nDrive: ");
+	display_int(drive_avg, 7);
 	display_update();
 
 	TerminateTask();
+}
+
+inline void RecordStat(DispStat* stat, int val) {
+	stat->sum += val;
+	if (stat->cnt++ == 0) {
+		stat->min = val;
+		stat->max = val;
+	}
+	else if (val < stat->min) {
+		stat->min = val;
+	}
+	else if (val > stat->max) {
+		stat->max = val;
+	}
 }
 
 //----------------------------------------------------------------------------+
 // TestColorSensor periodic every 50ms, priority 3                            |
 //----------------------------------------------------------------------------+
 TASK(ReadSensors) {
-	// Increment the displayed clock
-	cnt++;
-	
-	// Increment the counter used to average readings in the display task
-	sensor_cnt++;
-	
 	// Read the light sensor
-	U16 light = ecrobot_get_nxtcolorsensor_light(COLOR_PORT);
-	light_sum += light;
+	U16 light_now = ecrobot_get_nxtcolorsensor_light(COLOR_PORT);
+	RecordStat(&light, light_now);
 	
 	// Read the proximity sensor
-	S32 sonar = ecrobot_get_sonar_sensor(SONAR_PORT);
-	//sonar = ecrobot_get_sonar_sensor(SONAR_PORT);
-	sonar_sum += sonar;
+	S32 sonar_now = ecrobot_get_sonar_sensor(SONAR_PORT);
+	RecordStat(&sonar, sonar_now);
 	
-	// Read the angle
-	int angle = nxt_motor_get_count(STEER_MOTOR);
-	angle_sum += angle;
+	// Read the steer angle
+	int steer_now = nxt_motor_get_count(STEER_MOTOR);
+	RecordStat(&steer, steer_now);
 	
-	if (light < 250) {
-		line_rev_count = nxt_motor_get_count(LEFT_MOTOR);
+	// Read the drive revolution count
+	int drive_now = nxt_motor_get_count(LEFT_MOTOR);
+	RecordStat(&drive, drive_now);
+	
+	if (light_now < 250) {
+		line_rev_count = drive_now;
 		if (!on_line) {
 			on_line = true;
 			SetEvent(LineFollower, LineUpdateEvent);
@@ -170,7 +186,7 @@ TASK(ReadSensors) {
 		SetEvent(LineFollower, LineUpdateEvent);
 	}
 	
-	if (sonar < 30) {
+	if (sonar_now < 30) {
 		if (!obstacle) {
 			obstacle = true;
 			SetEvent(LineFollower, ObjectDetectedEvent);
@@ -320,7 +336,7 @@ inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
 TASK(LineFollower) {
 	//int course_state = START;
 	
-	velocity = SPEED_0_5 * FORWARD;
+	velocity = SPEED_4 * FORWARD;
 	SetEvent(MotorControl, AdjustMotorEvent);
 	
 	while (1) {
@@ -328,7 +344,7 @@ TASK(LineFollower) {
 		ClearEvent(LineUpdateEvent);
 		
 		if (!on_line) {
-			DriveForTime(SPEED_0_5, FORWARD, 500);
+			DriveForTime(SPEED_4, FORWARD, 500);
 		}
 	}
 	

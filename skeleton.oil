@@ -81,7 +81,7 @@ CPU ATMEL_AT91SAM7S256
   {
     AUTOSTART = TRUE
     {
-      CYCLETIME = 10;
+      CYCLETIME = 55;
       ALARMTIME = 1;
       APPMODE = appmode1;
     };
@@ -99,7 +99,7 @@ CPU ATMEL_AT91SAM7S256
   {
     AUTOSTART = TRUE
     {
-      CYCLETIME = 10;
+      CYCLETIME = 50;
       ALARMTIME = 1;
       APPMODE = appmode1;
     };
@@ -116,7 +116,7 @@ CPU ATMEL_AT91SAM7S256
   /*-------------------------------------------------------------------------*/
   TASK MotorControl
   {
-    PRIORITY = 5;
+    PRIORITY = 4;
     
     EVENT = AdjustMotorEvent;
     EVENT = SteerMotorEvent;
@@ -141,7 +141,7 @@ CPU ATMEL_AT91SAM7S256
   /*-------------------------------------------------------------------------*/
   TASK LineFollower
   {
-    PRIORITY = 4;
+    PRIORITY = 5;
     
     EVENT = LineUpdateEvent;
     EVENT = TurnCompleteEvent;
