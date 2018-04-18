@@ -53,37 +53,35 @@ enum DRIVE_DIRECTION {
 	FORWARD = -1,
 	REVERSE = 1,
 };
-
-enum SPEED {
+enum DRIVE_MAGNITUDE {
 	FASTEST = 100,
 	SLOWEST = 60,
 	STOPPED = 0,
 	
 	SPEED_0 = 60,
-	SPEED_0_5 = 65,
 	SPEED_1 = 70,
 	SPEED_2 = 80,
 	SPEED_3 = 90,
 	SPEED_4 = 100,
 };
 
-enum STEERING_ANGLE {
-	LEFT_HARD = -75,
-	LEFT_SOFT = -30,
-	LEFT_BUMP = -20,
+enum STEER_DIRECTION {
+	LEFT = -1,
+	RIGHT = 1,
+};
+enum STEER_MAGNITUDE {
 	STRAIGHT = 0,
-	RIGHT_BUMP = 20,
-	RIGHT_SOFT = 30,
-	RIGHT_HARD = 75,
+	BUMP = 15,
+	SOFT = 30,
+	HARD = 75,
 };
 
 // A controls set by the sensor task and read by the motor task
 volatile int velocity = FORWARD * SPEED_0;
+volatile unsigned int drive_counter = 0;
 
 volatile bool steer_signal_event = false;
-volatile int steer_target = 0;
-
-volatile unsigned int drive_counter = 0;
+volatile int target_angle = 0;
 
 //----------------------------------------------------------------------------+
 // nxtOSEK hooks                                                              |
@@ -205,6 +203,22 @@ TASK(ReadSensors) {
 	TerminateTask();
 }
 
+typedef struct {
+	int dir;
+	int mag;
+} vector;
+
+inline vector GetVector(int val) {
+	if (val < 0) {
+		vector v = { -1, -val };
+		return v;
+	}
+	else {
+		vector v = { 1, val };
+		return v;
+	}
+}
+
 //----------------------------------------------------------------------------+
 // MotorControl aperiodic task while(1), event-driven, priority 5             |
 //----------------------------------------------------------------------------+
@@ -219,12 +233,10 @@ TASK(MotorControl) {
 			ClearEvent(SteerMotorEvent);
 			
 			int current_angle = nxt_motor_get_count(STEER_MOTOR);
-			int delta_angle = steer_target - current_angle;
-			int direction = delta_angle < 0 ? -1 : 1;
-			delta_angle *= direction;
+			vector delta = GetVector(target_angle - current_angle);
 			
 			// Signal that steering is complete
-			if (delta_angle < 2) {
+			if (delta.mag < 2) {
 				nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
 				
 				if (steer_signal_event) {
@@ -235,15 +247,18 @@ TASK(MotorControl) {
 			
 			// Adjust the steering motor
 			else {
-				int speed = 60;
-				if (delta_angle > 15) {
-					speed = 70;
-				}
-				if (delta_angle > 30) {
+				int speed;
+				if (delta.mag > 30) {
 					speed = 80;
 				}
+				else if (delta.mag > 15) {
+					speed = 70;
+				}
+				else {
+					speed = 60;
+				}
 				
-				nxt_motor_set_speed(STEER_MOTOR, speed * direction, 0);
+				nxt_motor_set_speed(STEER_MOTOR, speed * delta.dir, 0);
 			}
 			
 			// Signal the drive_counter timer when completed 
@@ -272,18 +287,6 @@ TASK(MotorControl) {
 	TerminateTask();
 }
 
-enum COURSE_FSM {
-	START           = 0,
-	FIRST_CURVE     = 1,
-	FIRST_DOTTED    = 2,
-	FIRST_CORNER    = 3,
-	OBSTACLE        = 4,
-	SECOND_CORNER   = 5,
-	SECOND_DOTTED   = 6,
-	SECOND_CURVE    = 7,
-	FINISH          = 8,
-};
-
 //----------------------------------------------------------------------------+
 // Steer: Does an in-place turn and returns out when finished turning         |
 //----------------------------------------------------------------------------+
@@ -295,7 +298,7 @@ inline void Steer(int angle) {
 	steer_signal_event = false;
 	ClearEvent(SteerCompleteEvent);
 	
-	steer_target = angle;
+	target_angle = angle;
 	steer_signal_event = true;
 	
 	WaitEvent(SteerCompleteEvent);
@@ -341,7 +344,103 @@ inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
 	}
 }
 
-//inline void SearchAngle(
+inline bool TestAngle(int seek_angle) {
+	Steer(seek_angle);
+	if (DriveForTime(SPEED_4, FORWARD, 30)) {
+		return true;
+	}
+	DriveForTime(SPEED_4, REVERSE, 31);
+	return false;
+}
+
+enum COURSE_FSM {
+	START           = 0,
+	FIRST_CURVE     = 1,
+	
+	FIRST_DOTTED    = 3,
+	FIRST_CORNER    = 4,
+	
+	OBSTACLE        = 6,
+	
+	SECOND_CORNER   = 9,
+	
+	SECOND_DOTTED   = 11,
+	SECOND_CURVE    = 12,
+	
+	FINISH          = 14,
+};
+
+// default left to right looking orientation
+// multiply by -1 to reverse course_prediction
+int course_prediction[15] = {
+	BUMP,				//  0 => START
+	
+	LEFT * SOFT,		//  1 => FIRST_CURVE
+	RIGHT * SOFT,		//  2 => END_FIRST_CURVE
+	
+	STRAIGHT,			//  3 => FIRST_DOTTED
+	
+	RIGHT * HARD,		//  4 => FIRST_CORNER
+	LEFT * HARD,		//  5 => END_FIRST_CORNER
+	
+	RIGHT * HARD,		//  6 => OBSTACLE_AVERT
+	LEFT * HARD,		//  7 => OBSTACLE_CIRCLE_AROUND
+	RIGHT * HARD,		//  8 => OBSTACLE_STRAIGHTEN_BACK_ON_TRACK
+	
+	RIGHT * HARD,		//  9 => SECOND_CORNER
+	LEFT * HARD,		// 10 => END_SECOND_CORNER
+	
+	STRAIGHT,			// 11 => SECOND_DOTTED
+	
+	LEFT * SOFT,		// 12 => SECOND_CURVE
+	RIGHT * SOFT,		// 13 => END_SECOND_CURVE
+	
+	BUMP,				// 14 => FINISH
+};
+
+bool BumpFinder(int* angle, int dir1, int bump) {
+	int iteration = 0;
+	int dir2 = -1 * dir1;
+	bool hard1 = false;
+	bool hard2 = false;
+	int seek_angle;
+	
+	while (1) {
+		++iteration;
+		
+		if (!hard1) {
+			seek_angle = *angle + iteration * dir1 * bump;
+			vector v = GetVector(seek_angle);
+			if (v.mag >= HARD) {
+				seek_angle = dir1 * HARD;
+				hard1 = true;
+			}
+			
+			if (TestAngle(seek_angle)) {
+				*angle = seek_angle;
+				return true;
+			}
+		}
+		
+		if (!hard2) {
+			seek_angle = *angle + iteration * dir2 * bump;
+			vector v = GetVector(seek_angle);
+			if (v.mag >= HARD) {
+				seek_angle = dir2 * HARD; 
+				hard2 = true;
+			}
+			
+			if (TestAngle(seek_angle)) {
+				*angle = seek_angle;
+				return true;
+			}
+		}
+		
+		if (hard1 && hard2) {
+			return 0;
+		}
+	}
+}
 
 //----------------------------------------------------------------------------+
 // LineFollower aperiodic task while(1), event-driven, priority 4             |
@@ -351,75 +450,21 @@ inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
 //----------------------------------------------------------------------------+
 TASK(LineFollower) {
 	int angle = STRAIGHT;
+	U8 state = START;
 	
 	while (1) {
-		debug = 1;
 		velocity = FORWARD * SPEED_4;
 		SetEvent(MotorControl, AdjustMotorEvent);
 		
 		WaitEvent(LineUpdateEvent);
 		ClearEvent(LineUpdateEvent);
 
-		debug = 2;
-		
 		SetEvent(MotorControl, StopMotorEvent);
 		
 		if (!on_line) {
-			debug = 3;
-
-			int seek_angle;
-			int iteration = 0;
-			while (1) {
-				debug = 4;
-				++iteration;
-				
-				seek_angle = angle + iteration * LEFT_BUMP;
-				if (seek_angle < LEFT_HARD) {
-					seek_angle = LEFT_HARD; 
-				}
-				Steer(seek_angle);
-				debug = 4;
-				
-				if (DriveForTime(SPEED_4, FORWARD, 30)) {
-					angle = seek_angle;
-					break;
-				}
-				if (DriveForTime(SPEED_4, REVERSE, 31)) {
-					break;
-				}
-				
-				seek_angle = angle + iteration * RIGHT_BUMP;
-				if (seek_angle > RIGHT_HARD) {
-					seek_angle = RIGHT_HARD; 
-				}
-				Steer(seek_angle);
-				debug = 5;
-				
-				if (DriveForTime(SPEED_4, FORWARD, 30)) {
-					angle = seek_angle;
-					break;
-				}
-				if (DriveForTime(SPEED_4, REVERSE, 31)) {
-					break;
-				}
-				
-				Steer(0);
-				bool corner = false;
-				if (DriveForTime(SPEED_4, FORWARD, 30)) {
-					angle = seek_angle;
-					break;
-				} else {
-					corner = true;
-				}
-				if (DriveForTime(SPEED_4, REVERSE, 31)) {
-					break;
-				}
-				if (corner) {
-					DriveForTime(SPEED_4, REVERSE, 11);
-					break;
-				}
+			if (!BumpFinder(&angle, LEFT, BUMP)) {
+				break;
 			}
-			
 		}
 	}
 	
