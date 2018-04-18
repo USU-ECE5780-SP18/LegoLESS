@@ -42,10 +42,11 @@ DispStat steer = { 0 };
 DispStat drive = { 0 };
 DispStat light = { 0 };
 DispStat sonar = { 0 };
+volatile int debug = 0;
 
-bool on_line = true;
-bool obstacle = false;
-U32 line_rev_count = 0;
+volatile bool on_line = true;
+volatile bool obstacle = false;
+volatile U32 line_rev_count = 0;
 
 // Useful enums for managing the logic of the vehicle
 enum DRIVE_DIRECTION {
@@ -67,11 +68,13 @@ enum SPEED {
 };
 
 enum STEERING_ANGLE {
-	LEFT_HARD = -60,
+	LEFT_HARD = -75,
 	LEFT_SOFT = -30,
+	LEFT_BUMP = -20,
 	STRAIGHT = 0,
+	RIGHT_BUMP = 20,
 	RIGHT_SOFT = 30,
-	RIGHT_HARD = 60,
+	RIGHT_HARD = 75,
 };
 
 // A controls set by the sensor task and read by the motor task
@@ -119,7 +122,7 @@ TASK(BackgroundAlways) {
 TASK(Display) {
 	// Calculate the sum
 	int steer_avg = steer.sum / steer.cnt;
-	int drive_avg = drive.sum / drive.cnt;
+	int drive_avg = drive.max; // drive.sum / drive.cnt;
 	int light_avg = light.sum / light.cnt;
 	int sonar_avg = sonar.sum / sonar.cnt;
 	steer.cnt = drive.cnt = light.cnt = sonar.cnt = 0;
@@ -135,6 +138,8 @@ TASK(Display) {
 	display_int(steer_avg, 7);
 	display_string("\nDrive: ");
 	display_int(drive_avg, 7);
+	display_string("\nDebug: ");
+	display_int(debug, 7);
 	display_update();
 
 	TerminateTask();
@@ -145,6 +150,7 @@ inline void RecordStat(DispStat* stat, int val) {
 	if (stat->cnt++ == 0) {
 		stat->min = val;
 		stat->max = val;
+		stat->sum = val;
 	}
 	else if (val < stat->min) {
 		stat->min = val;
@@ -218,7 +224,7 @@ TASK(MotorControl) {
 			delta_angle *= direction;
 			
 			// Signal that steering is complete
-			if (delta_angle == 0) {
+			if (delta_angle < 2) {
 				nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
 				
 				if (steer_signal_event) {
@@ -229,7 +235,14 @@ TASK(MotorControl) {
 			
 			// Adjust the steering motor
 			else {
-				int speed = delta_angle > 15 ? 75 : 50;
+				int speed = 60;
+				if (delta_angle > 15) {
+					speed = 70;
+				}
+				if (delta_angle > 30) {
+					speed = 80;
+				}
+				
 				nxt_motor_set_speed(STEER_MOTOR, speed * direction, 0);
 			}
 			
@@ -279,6 +292,7 @@ inline void Steer(int angle) {
 	SetEvent(MotorControl, StopMotorEvent);
 	
 	// Clear any previous signal (should be a no-op but safety first)
+	steer_signal_event = false;
 	ClearEvent(SteerCompleteEvent);
 	
 	steer_target = angle;
@@ -327,6 +341,8 @@ inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
 	}
 }
 
+//inline void SearchAngle(
+
 //----------------------------------------------------------------------------+
 // LineFollower aperiodic task while(1), event-driven, priority 4             |
 // Assumptions:                                                               |
@@ -334,38 +350,61 @@ inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
 //   2: The car is over the line to begin with (and relatively straight)      |
 //----------------------------------------------------------------------------+
 TASK(LineFollower) {
-	//int course_state = START;
-	
-	velocity = SPEED_4 * FORWARD;
-	SetEvent(MotorControl, AdjustMotorEvent);
+	int angle = STRAIGHT;
 	
 	while (1) {
+		debug = 1;
+		velocity = FORWARD * SPEED_4;
+		SetEvent(MotorControl, AdjustMotorEvent);
+		
 		WaitEvent(LineUpdateEvent);
 		ClearEvent(LineUpdateEvent);
+
+		debug = 2;
+		
+		SetEvent(MotorControl, StopMotorEvent);
 		
 		if (!on_line) {
-			DriveForTime(SPEED_4, FORWARD, 500);
+			debug = 3;
+
+			int seek_angle;
+			int iteration = 0;
+			while (1) {
+				debug = 4;
+				++iteration;
+				
+				seek_angle = angle + iteration * LEFT_BUMP;
+				if (seek_angle < LEFT_HARD) {
+					seek_angle = LEFT_HARD; 
+				}
+				Steer(seek_angle);
+				debug = 4;
+				
+				if (DriveForTime(SPEED_4, FORWARD, 30)) {
+					angle = seek_angle;
+					break;
+				}
+				if (DriveForTime(SPEED_4, REVERSE, 31)) {
+					break;
+				}
+				
+				seek_angle = angle + iteration * RIGHT_BUMP;
+				if (seek_angle > RIGHT_HARD) {
+					seek_angle = RIGHT_HARD; 
+				}
+				Steer(seek_angle);
+				debug = 5;
+				
+				if (DriveForTime(SPEED_4, FORWARD, 30)) {
+					angle = seek_angle;
+					break;
+				}
+				if (DriveForTime(SPEED_4, REVERSE, 31)) {
+					break;
+				}
+			}
+			
 		}
-	}
-	
-	TerminateTask();
-	return;
-	while (1) {
-		Steer(LEFT_SOFT);
-		DriveForTime(SPEED_2, FORWARD, 10);
-		DriveForTime(STOPPED, FORWARD, 20);
-		
-		Steer(STRAIGHT);
-		DriveForTime(SPEED_2, FORWARD, 10);
-		DriveForTime(STOPPED, FORWARD, 20);
-		
-		Steer(RIGHT_SOFT);
-		DriveForTime(SPEED_2, FORWARD, 10);
-		DriveForTime(STOPPED, FORWARD, 20);
-		
-		Steer(STRAIGHT);
-		DriveForTime(SPEED_2, FORWARD, 10);
-		DriveForTime(STOPPED, FORWARD, 20);
 	}
 	
 	TerminateTask();

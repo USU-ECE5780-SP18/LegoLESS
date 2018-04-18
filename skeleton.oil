@@ -116,7 +116,7 @@ CPU ATMEL_AT91SAM7S256
   /*-------------------------------------------------------------------------*/
   TASK MotorControl
   {
-    PRIORITY = 4;
+    PRIORITY = 5;
     
     EVENT = AdjustMotorEvent;
     EVENT = SteerMotorEvent;
@@ -141,7 +141,7 @@ CPU ATMEL_AT91SAM7S256
   /*-------------------------------------------------------------------------*/
   TASK LineFollower
   {
-    PRIORITY = 5;
+    PRIORITY = 4;
     
     EVENT = LineUpdateEvent;
     EVENT = TurnCompleteEvent;
