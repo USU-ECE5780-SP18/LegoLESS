@@ -143,6 +143,9 @@ TASK(Display) {
 	TerminateTask();
 }
 
+//----------------------------------------------------------------------------+
+// RecordStat: Tracks {avg, min, max} over period of TASK(Display)            |
+//----------------------------------------------------------------------------+
 inline void RecordStat(DispStat* stat, int val) {
 	stat->sum += val;
 	if (stat->cnt++ == 0) {
@@ -203,11 +206,10 @@ TASK(ReadSensors) {
 	TerminateTask();
 }
 
-typedef struct {
-	int dir;
-	int mag;
-} vector;
-
+//----------------------------------------------------------------------------+
+// GetVector: Small helper for separating magnitude from direction            |
+//----------------------------------------------------------------------------+
+typedef struct { int dir; int mag; } vector;
 inline vector GetVector(int val) {
 	if (val < 0) {
 		vector v = { -1, -val };
@@ -217,6 +219,229 @@ inline vector GetVector(int val) {
 		vector v = { 1, val };
 		return v;
 	}
+}
+
+//----------------------------------------------------------------------------+
+// FollowLine: Drive until loosing the line or hitting the timeout (0 => inf) |
+// returns true: If the line is lost before the time runs out                 |
+//----------------------------------------------------------------------------+
+inline bool FollowLine(int speed, int direction, unsigned int timeout) {
+	// Clear any previous driving command (should be a no-op but safety first)
+	drive_counter = 0;
+	ClearEvent(DriveCompleteEvent);
+	
+	// Set the global variables to drive_counter for the speed and duration desired
+	velocity = speed * direction;
+	drive_counter = timeout;
+	
+	// Get the motor's going
+	SetEvent(MotorControl, AdjustMotorEvent);
+	
+	// Wait for the timer or line found
+	while (1) {
+		WaitEvent(DriveCompleteEvent | LineUpdateEvent);
+		
+		EventMaskType eMask = 0;
+		GetEvent(LineFollower, &eMask);
+		
+		if (eMask & LineUpdateEvent && on_line) {
+			ClearEvent(LineUpdateEvent);
+			continue; 
+		}
+		
+		// Stop now that we've hit our timer or lost the line
+		SetEvent(MotorControl, StopMotorEvent);
+		
+		drive_counter = 0;
+		ClearEvent(DriveCompleteEvent);
+		ClearEvent(LineUpdateEvent);
+		
+		return eMask & LineUpdateEvent ? true : false;
+	}
+}
+
+//----------------------------------------------------------------------------+
+// SeekLine: Drive until finding the line or hitting the timeout              |
+// returns true: If the line is found before the time runs out                |
+//----------------------------------------------------------------------------+
+inline bool SeekLine(int speed, int direction, unsigned int timeout) {
+	// Clear any previous driving command (should be a no-op but safety first)
+	drive_counter = 0;
+	ClearEvent(DriveCompleteEvent);
+	
+	// Set the global variables to drive_counter for the speed and duration desired
+	velocity = speed * direction;
+	drive_counter = timeout;
+	
+	// Get the motor's going
+	SetEvent(MotorControl, AdjustMotorEvent);
+	
+	// Wait for the timer or line found
+	while (1) {
+		WaitEvent(DriveCompleteEvent | LineUpdateEvent);
+		
+		EventMaskType eMask = 0;
+		GetEvent(LineFollower, &eMask);
+		
+		if (eMask & LineUpdateEvent && !on_line) {
+			ClearEvent(LineUpdateEvent);
+			continue; 
+		}
+		
+		// Stop now that we've hit our timer or found the line
+		SetEvent(MotorControl, StopMotorEvent);
+		
+		drive_counter = 0;
+		ClearEvent(DriveCompleteEvent);
+		ClearEvent(LineUpdateEvent);
+		
+		return eMask & LineUpdateEvent ? true : false;
+	}
+}
+
+//----------------------------------------------------------------------------+
+// Steer: Does an in-place turn and returns out when finished turning         |
+//----------------------------------------------------------------------------+
+inline void Steer(int angle) {
+	// Stop to simplify logic (should be a no-op but safety first)
+	SetEvent(MotorControl, StopMotorEvent);
+	
+	// Clear any previous signal (should be a no-op but safety first)
+	steer_signal_event = false;
+	ClearEvent(SteerCompleteEvent);
+	
+	target_angle = angle;
+	steer_signal_event = true;
+	
+	WaitEvent(SteerCompleteEvent);
+	ClearEvent(SteerCompleteEvent);
+}
+
+//----------------------------------------------------------------------------+
+// TestAngle: Attempts to find the line, reverses the test if it fails        |
+// returns true: If the line is found in the allotted time                    |
+//----------------------------------------------------------------------------+
+inline bool TestAngle(int seek_angle, int timeout) {
+	Steer(seek_angle);
+	if (SeekLine(SPEED_4, FORWARD, timeout)) {
+		return true;
+	}
+	// Our car inches slightly forward given equal timeouts forward and back
+	SeekLine(SPEED_4, REVERSE, ++timeout);
+	return false;
+}
+
+bool BumpFinder(int* angle, int dir1, int bump, int timeout) {
+	int iteration = 0;
+	int dir2 = -1 * dir1;
+	bool hard1 = false;
+	bool hard2 = false;
+	int seek_angle;
+	
+	while (1) {
+		++iteration;
+		
+		if (!hard1) {
+			seek_angle = *angle + iteration * dir1 * bump;
+			vector v = GetVector(seek_angle);
+			if (v.mag >= HARD) {
+				seek_angle = dir1 * HARD;
+				hard1 = true;
+			}
+			
+			if (TestAngle(seek_angle, timeout)) {
+				*angle = seek_angle;
+				return true;
+			}
+		}
+		
+		if (!hard2) {
+			seek_angle = *angle + iteration * dir2 * bump;
+			vector v = GetVector(seek_angle);
+			if (v.mag >= HARD) {
+				seek_angle = dir2 * HARD; 
+				hard2 = true;
+			}
+			
+			if (TestAngle(seek_angle, timeout)) {
+				*angle = seek_angle;
+				return true;
+			}
+		}
+		
+		if (hard1 && hard2) {
+			return 0;
+		}
+	}
+}
+
+enum COURSE_FSM {
+	START           = 0,
+	FIRST_CURVE     = 1,
+	
+	FIRST_DOTTED    = 3,
+	FIRST_CORNER    = 4,
+	
+	OBSTACLE        = 6,
+	
+	SECOND_CORNER   = 9,
+	
+	SECOND_DOTTED   = 11,
+	SECOND_CURVE    = 12,
+	
+	FINISH          = 14,
+};
+
+// default left to right looking orientation
+// multiply by -1 to reverse course_prediction
+int course_prediction[15] = {
+	BUMP,				//  0 => START
+	
+	LEFT * SOFT,		//  1 => FIRST_CURVE
+	RIGHT * SOFT,		//  2 => END_FIRST_CURVE
+	
+	STRAIGHT,			//  3 => FIRST_DOTTED
+	
+	RIGHT * HARD,		//  4 => FIRST_CORNER
+	LEFT * HARD,		//  5 => END_FIRST_CORNER
+	
+	RIGHT * HARD,		//  6 => OBSTACLE_AVERT
+	LEFT * HARD,		//  7 => OBSTACLE_CIRCLE_AROUND
+	RIGHT * HARD,		//  8 => OBSTACLE_STRAIGHTEN_BACK_ON_TRACK
+	
+	RIGHT * HARD,		//  9 => SECOND_CORNER
+	LEFT * HARD,		// 10 => END_SECOND_CORNER
+	
+	STRAIGHT,			// 11 => SECOND_DOTTED
+	
+	LEFT * SOFT,		// 12 => SECOND_CURVE
+	RIGHT * SOFT,		// 13 => END_SECOND_CURVE
+	
+	BUMP,				// 14 => FINISH
+};
+
+//----------------------------------------------------------------------------+
+// LineFollower aperiodic task while(1), event-driven, priority 4             |
+// Assumptions:                                                               |
+//   1: The wheels are straight to begin with                                 |
+//   2: The car is over the line to begin with (and relatively straight)      |
+//----------------------------------------------------------------------------+
+TASK(LineFollower) {
+	int angle = STRAIGHT;
+	int angle_next = angle;
+	U8 state = START;
+	
+	while (1) {
+		FollowLine(SPEED_4, FORWARD, 0);
+		
+		if (BumpFinder(&angle_next, LEFT, BUMP, 30)) {
+			angle = angle_next;
+		}
+		
+		break;
+	}
+	
+	TerminateTask();
 }
 
 //----------------------------------------------------------------------------+
@@ -281,190 +506,6 @@ TASK(MotorControl) {
 			
 			nxt_motor_set_speed(LEFT_MOTOR, STOPPED, 1);
 			nxt_motor_set_speed(RIGHT_MOTOR, STOPPED, 1);
-		}
-	}
-	
-	TerminateTask();
-}
-
-//----------------------------------------------------------------------------+
-// Steer: Does an in-place turn and returns out when finished turning         |
-//----------------------------------------------------------------------------+
-inline void Steer(int angle) {
-	// Stop to simplify logic (should be a no-op but safety first)
-	SetEvent(MotorControl, StopMotorEvent);
-	
-	// Clear any previous signal (should be a no-op but safety first)
-	steer_signal_event = false;
-	ClearEvent(SteerCompleteEvent);
-	
-	target_angle = angle;
-	steer_signal_event = true;
-	
-	WaitEvent(SteerCompleteEvent);
-	ClearEvent(SteerCompleteEvent);
-}
-
-//----------------------------------------------------------------------------+
-// DriveForTime: Drive until finding the line or hitting the timeout          |
-// returns true: If the line is found before the time runs out                |
-//----------------------------------------------------------------------------+
-inline bool DriveForTime(int speed, int direction, unsigned int timeout) {
-	// Clear any previous driving command (should be a no-op but safety first)
-	drive_counter = 0;
-	ClearEvent(DriveCompleteEvent);
-	
-	// Set the global variables to drive_counter for the speed and duration desired
-	velocity = speed * direction;
-	drive_counter = timeout;
-	
-	// Get the motor's going
-	SetEvent(MotorControl, AdjustMotorEvent);
-	
-	// Wait for the timer or line found
-	while (1) {
-		WaitEvent(DriveCompleteEvent | LineUpdateEvent);
-		
-		EventMaskType eMask = 0;
-		GetEvent(LineFollower, &eMask);
-		
-		if (eMask & LineUpdateEvent && !on_line) {
-			ClearEvent(LineUpdateEvent);
-			continue; 
-		}
-		
-		// Stop now that we've hit our timer or found the line
-		SetEvent(MotorControl, StopMotorEvent);
-		
-		drive_counter = 0;
-		ClearEvent(DriveCompleteEvent);
-		ClearEvent(LineUpdateEvent);
-		
-		return eMask & LineUpdateEvent ? true : false;
-	}
-}
-
-inline bool TestAngle(int seek_angle) {
-	Steer(seek_angle);
-	if (DriveForTime(SPEED_4, FORWARD, 30)) {
-		return true;
-	}
-	DriveForTime(SPEED_4, REVERSE, 31);
-	return false;
-}
-
-enum COURSE_FSM {
-	START           = 0,
-	FIRST_CURVE     = 1,
-	
-	FIRST_DOTTED    = 3,
-	FIRST_CORNER    = 4,
-	
-	OBSTACLE        = 6,
-	
-	SECOND_CORNER   = 9,
-	
-	SECOND_DOTTED   = 11,
-	SECOND_CURVE    = 12,
-	
-	FINISH          = 14,
-};
-
-// default left to right looking orientation
-// multiply by -1 to reverse course_prediction
-int course_prediction[15] = {
-	BUMP,				//  0 => START
-	
-	LEFT * SOFT,		//  1 => FIRST_CURVE
-	RIGHT * SOFT,		//  2 => END_FIRST_CURVE
-	
-	STRAIGHT,			//  3 => FIRST_DOTTED
-	
-	RIGHT * HARD,		//  4 => FIRST_CORNER
-	LEFT * HARD,		//  5 => END_FIRST_CORNER
-	
-	RIGHT * HARD,		//  6 => OBSTACLE_AVERT
-	LEFT * HARD,		//  7 => OBSTACLE_CIRCLE_AROUND
-	RIGHT * HARD,		//  8 => OBSTACLE_STRAIGHTEN_BACK_ON_TRACK
-	
-	RIGHT * HARD,		//  9 => SECOND_CORNER
-	LEFT * HARD,		// 10 => END_SECOND_CORNER
-	
-	STRAIGHT,			// 11 => SECOND_DOTTED
-	
-	LEFT * SOFT,		// 12 => SECOND_CURVE
-	RIGHT * SOFT,		// 13 => END_SECOND_CURVE
-	
-	BUMP,				// 14 => FINISH
-};
-
-bool BumpFinder(int* angle, int dir1, int bump) {
-	int iteration = 0;
-	int dir2 = -1 * dir1;
-	bool hard1 = false;
-	bool hard2 = false;
-	int seek_angle;
-	
-	while (1) {
-		++iteration;
-		
-		if (!hard1) {
-			seek_angle = *angle + iteration * dir1 * bump;
-			vector v = GetVector(seek_angle);
-			if (v.mag >= HARD) {
-				seek_angle = dir1 * HARD;
-				hard1 = true;
-			}
-			
-			if (TestAngle(seek_angle)) {
-				*angle = seek_angle;
-				return true;
-			}
-		}
-		
-		if (!hard2) {
-			seek_angle = *angle + iteration * dir2 * bump;
-			vector v = GetVector(seek_angle);
-			if (v.mag >= HARD) {
-				seek_angle = dir2 * HARD; 
-				hard2 = true;
-			}
-			
-			if (TestAngle(seek_angle)) {
-				*angle = seek_angle;
-				return true;
-			}
-		}
-		
-		if (hard1 && hard2) {
-			return 0;
-		}
-	}
-}
-
-//----------------------------------------------------------------------------+
-// LineFollower aperiodic task while(1), event-driven, priority 4             |
-// Assumptions:                                                               |
-//   1: The wheels are straight to begin with                                 |
-//   2: The car is over the line to begin with (and relatively straight)      |
-//----------------------------------------------------------------------------+
-TASK(LineFollower) {
-	int angle = STRAIGHT;
-	U8 state = START;
-	
-	while (1) {
-		velocity = FORWARD * SPEED_4;
-		SetEvent(MotorControl, AdjustMotorEvent);
-		
-		WaitEvent(LineUpdateEvent);
-		ClearEvent(LineUpdateEvent);
-
-		SetEvent(MotorControl, StopMotorEvent);
-		
-		if (!on_line) {
-			if (!BumpFinder(&angle, LEFT, BUMP)) {
-				break;
-			}
 		}
 	}
 	
