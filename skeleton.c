@@ -402,6 +402,22 @@ TASK(LineFollower) {
 				if (DriveForTime(SPEED_4, REVERSE, 31)) {
 					break;
 				}
+				
+				Steer(0);
+				bool corner = false;
+				if (DriveForTime(SPEED_4, FORWARD, 30)) {
+					angle = seek_angle;
+					break;
+				} else {
+					corner = true;
+				}
+				if (DriveForTime(SPEED_4, REVERSE, 31)) {
+					break;
+				}
+				if (corner) {
+					DriveForTime(SPEED_4, REVERSE, 11);
+					break;
+				}
 			}
 			
 		}
