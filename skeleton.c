@@ -66,8 +66,9 @@ enum STEER_DIRECTION {
 };
 enum STEER_MAGNITUDE {
 	STRAIGHT = 0,
-	BUMP = 20,
-	SOFT = 45,
+	BUMP = 10,
+	SOFT = 35,
+	TURN = 45,
 	HARD = 75,
 };
 
