@@ -521,12 +521,29 @@ TASK(LineFollower) {
 		FollowLine(SPEED_4, FORWARD, 0);
 		
 		bool find =
-			AsymmetricFinder(&angle_next,  bump_dir, SOFT, 0, 2, 15) ||
-			AsymmetricFinder(&angle_next, -bump_dir, SOFT, 0, 2, 15);
+			AsymmetricFinder(&angle_next,  bump_dir, SOFT, 0, 2, 20) ||
+			AsymmetricFinder(&angle_next, -bump_dir, SOFT, 0, 2, 20);
 		
 		if (!find) {
-			TerminateTask();
-			return;
+			Steer(-angle);
+			SeekLine(SPEED_4, REVERSE, 20);
+			
+			Steer(STRAIGHT);
+			SetEvent(MotorSpeedControl, MotorStartEvent);
+			countdown = 15;
+			SetEvent(MotorRevControl, TimerStartEvent);
+			WaitEvent(TimerCompleteEvent);
+			ClearEvent(TimerCompleteEvent);
+			SetEvent(MotorSpeedControl, MotorStopEvent);
+			
+			find =
+				AsymmetricFinder(&angle_next,  bump_dir, SOFT, 0, 2, 20) ||
+				AsymmetricFinder(&angle_next, -bump_dir, SOFT, 0, 2, 20);
+			
+			if (!find) {
+				TerminateTask();
+				return;
+			}
 		}
 		
 		vector delta = GetVector(angle_next - angle);
