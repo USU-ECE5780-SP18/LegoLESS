@@ -23,6 +23,12 @@ DeclareTask(LineFollower);
 DeclareTask(MotorRevControl);
 DeclareTask(MotorSpeedControl);
 
+DeclareEvent(LineUpdateEvent);
+DeclareEvent(ObjectDetectedEvent);
+DeclareEvent(TimerCompleteEvent);
+DeclareEvent(DriveCompleteEvent);
+DeclareEvent(SteerCompleteEvent);
+
 DeclareEvent(RevCheckEvent);
 DeclareEvent(TimerStartEvent);
 DeclareEvent(DriveStartEvent);
@@ -30,12 +36,6 @@ DeclareEvent(SteerStartEvent);
 
 DeclareEvent(MotorStartEvent);
 DeclareEvent(MotorStopEvent);
-
-DeclareEvent(LineUpdateEvent);
-DeclareEvent(ObjectDetectedEvent);
-DeclareEvent(TimerCompleteEvent);
-DeclareEvent(DriveCompleteEvent);
-DeclareEvent(SteerCompleteEvent);
 
 // Global variables used to calculate averages that are displayed
 DispStat steer = { 0 };
