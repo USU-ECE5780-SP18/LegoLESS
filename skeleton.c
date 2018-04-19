@@ -185,7 +185,7 @@ TASK(ReadSensors) {
 	int drive_now = nxt_motor_get_count(LEFT_MOTOR);
 	RecordStat(&drive, drive_now);
 	
-	if (light_now < 250) {
+	if (light_now < 300) {
 		line_rev_count = drive_now;
 		if (!on_line) {
 			on_line = true;
