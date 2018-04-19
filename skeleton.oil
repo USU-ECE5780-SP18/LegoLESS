@@ -118,7 +118,7 @@ CPU ATMEL_AT91SAM7S256
   {
     PRIORITY = 5;
     
-    EVENT = AdjustMotorEvent;
+    EVENT = StartMotorEvent;
     EVENT = SteerMotorEvent;
     EVENT = StopMotorEvent;
     
@@ -134,7 +134,7 @@ CPU ATMEL_AT91SAM7S256
   EVENT SteerMotorEvent { MASK = AUTO; };
   
   EVENT StopMotorEvent { MASK = AUTO; };
-  EVENT AdjustMotorEvent { MASK = AUTO; };
+  EVENT StartMotorEvent { MASK = AUTO; };
   
   /*-------------------------------------------------------------------------*/
   /* LineFollower aperiodic task while(1), event-driven, priority 4          */

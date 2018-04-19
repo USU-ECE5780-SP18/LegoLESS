@@ -22,7 +22,7 @@ DeclareTask(ReadSensors);
 DeclareTask(MotorControl);
 DeclareTask(LineFollower);
 
-DeclareEvent(AdjustMotorEvent);
+DeclareEvent(StartMotorEvent);
 DeclareEvent(SteerMotorEvent);
 DeclareEvent(StopMotorEvent);
 
@@ -234,7 +234,7 @@ inline bool FollowLine(int speed, int direction, unsigned int timeout) {
 	drive_counter = timeout;
 	
 	// Get the motor's going
-	SetEvent(MotorControl, AdjustMotorEvent);
+	SetEvent(MotorControl, StartMotorEvent);
 	
 	// Wait for the timer or line found
 	while (1) {
@@ -273,7 +273,7 @@ inline bool SeekLine(int speed, int direction, unsigned int timeout) {
 	drive_counter = timeout;
 	
 	// Get the motor's going
-	SetEvent(MotorControl, AdjustMotorEvent);
+	SetEvent(MotorControl, StartMotorEvent);
 	
 	// Wait for the timer or line found
 	while (1) {
@@ -517,7 +517,7 @@ TASK(LineFollower) {
 //----------------------------------------------------------------------------+
 TASK(MotorControl) {
 	while(1) {
-		WaitEvent(SteerMotorEvent | AdjustMotorEvent | StopMotorEvent);
+		WaitEvent(SteerMotorEvent | StartMotorEvent | StopMotorEvent);
 		
 		EventMaskType eMask = 0;
 		GetEvent(MotorControl, &eMask);
@@ -562,8 +562,8 @@ TASK(MotorControl) {
 			}
 		}
 		
-		if (eMask & AdjustMotorEvent) {
-			ClearEvent(AdjustMotorEvent);
+		if (eMask & StartMotorEvent) {
+			ClearEvent(StartMotorEvent);
 			
 			nxt_motor_set_speed(LEFT_MOTOR, velocity, 0);
 			nxt_motor_set_speed(RIGHT_MOTOR, velocity, 0);
