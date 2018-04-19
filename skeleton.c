@@ -42,6 +42,7 @@ DispStat steer = { 0 };
 DispStat drive = { 0 };
 DispStat light = { 0 };
 DispStat sonar = { 0 };
+volatile int state = 0;
 volatile int debug = 0;
 
 volatile bool on_line = true;
@@ -74,7 +75,7 @@ enum STEER_MAGNITUDE {
 	BUMP = 10,
 	SOFT = 35,
 	TURN = 45,
-	HARD = 85,
+	HARD = 80,
 };
 
 // Targets used by MotorRevControl
@@ -137,6 +138,8 @@ TASK(Display) {
 	display_int(steer_avg, 7);
 	display_string("\nDrive: ");
 	display_int(drive_avg, 7);
+	display_string("\nState: ");
+	display_int(state, 7);
 	display_string("\nDebug: ");
 	display_int(debug, 7);
 	display_update();
@@ -328,7 +331,9 @@ inline bool TestForward(int timeout) {
 		return true;
 	}
 	// Our car inches slightly forward given equal timeouts forward and back
-	SeekLine(SPEED_4, REVERSE, ++timeout);
+	if (SeekLine(SPEED_4, REVERSE, ++timeout)) {
+		return true;
+	}
 	return false;
 }
 
@@ -361,12 +366,6 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int minit, int maxit, int t
 				*angle = seek_angle;
 				return true;
 			}
-		}
-		
-		// Jerry-rigged Bugfix
-		if (on_line) {
-			ClearEvent(LineUpdateEvent);
-			return true;
 		}
 		
 		if (!hard2) {
@@ -478,24 +477,25 @@ int course_prediction[15] = {
 TASK(LineFollower) {
 	int angle = STRAIGHT;
 	int angle_next = angle;
-	U8 state = START;
 	
 	int drive_last = drive.now;
 	int course_dir = LEFT;
 	int bump_dir = LEFT;
 	
 	// Follow a straight line
+	state = 1;
 	while (1) {
-		debug = 1;
 		FollowLine(SPEED_4, FORWARD, 0);
 		drive_last = drive.now;
 		
 		angle_next = STRAIGHT;
-		bool find = SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, 10);
+		bool find = SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, 15);
 		
 		vector drive_delta = GetVector(drive.now - drive_last);
+		debug = drive_delta.mag;
 		
 		if (!find) {
+			debug = 0;
 			TerminateTask();
 			return;
 		}
@@ -508,7 +508,7 @@ TASK(LineFollower) {
 		bump_dir = delta.dir;
 		
 		// Advance to the next stage after a significant turn
-		if (drive_delta.mag > 110) {
+		if (drive_delta.mag > 120) {
 			course_dir = bump_dir;
 			angle_next = angle = course_dir * SOFT;
 			break;
@@ -516,8 +516,8 @@ TASK(LineFollower) {
 	}
 	
 	// Follow a curved line
+	state = 2;
 	while (1) {
-		debug = 2;
 		FollowLine(SPEED_4, FORWARD, 0);
 		
 		bool find =
@@ -544,49 +544,15 @@ TASK(LineFollower) {
 		}
 	}
 	
-	// Follow a dashed line (coming out of a curve)
+	// Follow a dashed line
+	state = 3;
 	while (1) {
-		debug = 3;
 		FollowLine(SPEED_4, FORWARD, 0);
 		
-		if (TestForward(10)) { continue; }
-		
-		drive_last = drive.now;
-		angle_next = STRAIGHT;
-		
-		bool find =
-			SymmetricFinder(&angle_next,  bump_dir, 3 * BUMP, 0, 2, 15);
-
-		if (!find) {
-			// Advance to the next round when a hard turn performs better
-			if (SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, 10)) {
-				break;
-			}
-			else {
-				TerminateTask();
-				return;
-			}
-		}
-		
-		vector drive_delta = GetVector(drive.now - drive_last);
-		
-		Steer(STRAIGHT);
-		vector delta = GetVector(angle_next);
-		
-		// Turn prediction:
-		// Expect the next turn to be the same direction as the last
-		bump_dir = delta.dir;
-	}
-	
-	// Follow a dashed line (after straightening out)
-	while (1) {
-		debug = 4;
-		FollowLine(SPEED_4, FORWARD, 0);
-		
-		if (TestForward(10)) { continue; }
+		if (TestForward(15)) { continue; }
 		
 		angle_next = STRAIGHT;
-		bool find = SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, 10);
+		bool find = SymmetricFinder(&angle_next, bump_dir, SOFT, 0, 1, 15);
 		
 		vector drive_delta = GetVector(drive.now - drive_last);
 		
