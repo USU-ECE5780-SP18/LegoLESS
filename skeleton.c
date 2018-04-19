@@ -337,8 +337,8 @@ inline bool TestForward(int timeout) {
 // Tests increasing multiples of `bump` on alternating sides of `angle`       |
 // returns true: If the line is found                                         |
 //----------------------------------------------------------------------------+
-bool SymmetricFinder(int* angle, int dir1, int bump, int maxit, int timeout) {
-	int step = 0;
+bool SymmetricFinder(int* angle, int dir1, int bump, int minit, int maxit, int timeout) {
+	int step = minit;
 	int dir2 = -dir1;
 	bool hard1 = false;
 	bool hard2 = false;
@@ -389,8 +389,8 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int maxit, int timeout) {
 // Tests increasing multiples of `bump` on the given side of `angle`          |
 // returns true: If the line is found                                         |
 //----------------------------------------------------------------------------+
-bool AsymmetricFinder(int* angle, int dir, int bump, int maxit, int timeout) {
-	int step = 0;
+bool AsymmetricFinder(int* angle, int dir, int bump, int minit, int maxit, int timeout) {
+	int step = minit;
 	bool hard = false;
 	int seek_angle;
 	
@@ -486,7 +486,10 @@ TASK(LineFollower) {
 		int drive_delta = drive.now - drive_last;
 		//debug = drive_delta;
 		
-		if (SymmetricFinder(&angle_next, bump_dir, BUMP, 0, 30)) {
+		bool find =
+			SymmetricFinder(&angle_next, bump_dir, BUMP, 0, 0, 35);
+		
+		if (find) {
 			vector delta = GetVector(angle_next - angle);
 			angle = angle_next;
 			
