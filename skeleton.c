@@ -557,7 +557,6 @@ TASK(LineFollower) {
 		vector drive_delta = GetVector(drive.now - drive_last);
 		
 		if (!find) {
-			// Check for a corner using drive_delta.mag
 			break;
 		}
 		
@@ -567,6 +566,23 @@ TASK(LineFollower) {
 		// Turn prediction:
 		// Expect the next turn to be the same direction as the last
 		bump_dir = delta.dir;
+	}
+	
+	// Make a sharp turn
+	state = 4;
+	while (1) {
+		Steer(course_dir * HARD);
+		velocity = SPEED_4 * REVERSE;
+		SetEvent(MotorSpeedControl, MotorStartEvent);
+		countdown = 10;
+		SetEvent(MotorRevControl, TimerStartEvent);
+		WaitEvent(TimerCompleteEvent);
+		ClearEvent(TimerCompleteEvent);
+		SetEvent(MotorSpeedControl, MotorStopEvent);
+		
+		Steer(course_dir * -HARD);
+		TestForward(0);
+		break;
 	}
 	
 	TerminateTask();
