@@ -93,9 +93,61 @@ CPU ATMEL_AT91SAM7S256
   };
   
   /*-------------------------------------------------------------------------*/
-  /* Trigger a steering event every 10ms                                     */
+  /* LineFollower aperiodic task while(1), event-driven, priority 4          */
   /*-------------------------------------------------------------------------*/
-  ALARM cyclic_adjust_steer
+  TASK LineFollower
+  {
+    PRIORITY = 4;
+    
+    EVENT = LineUpdateEvent;
+    EVENT = ObjectDetectedEvent;
+    EVENT = TimerCompleteEvent;
+    EVENT = DriveCompleteEvent;
+    EVENT = SteerCompleteEvent;
+    
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
+    AUTOSTART = TRUE
+    {
+      APPMODE = appmode1;
+    };
+  };
+  EVENT LineUpdateEvent { MASK = AUTO; };
+  EVENT ObjectDetectedEvent { MASK = AUTO; };
+  EVENT TimerCompleteEvent { MASK = AUTO; };
+  EVENT DriveCompleteEvent { MASK = AUTO; };
+  EVENT SteerCompleteEvent { MASK = AUTO; };
+  
+  /*-------------------------------------------------------------------------*/
+  /* MotorRevControl aperiodic task while(1), event-driven, priority 5       */
+  /*-------------------------------------------------------------------------*/
+  TASK MotorRevControl
+  {
+    PRIORITY = 5;
+    
+    EVENT = RevCheckEvent;
+    EVENT = TimerStartEvent;
+    EVENT = DriveStartEvent;
+    EVENT = SteerStartEvent;
+    
+    ACTIVATION = 1;
+    SCHEDULE = FULL;
+    STACKSIZE = 512;
+    AUTOSTART = TRUE
+    {
+      APPMODE = appmode1;
+    };
+  };
+  EVENT RevCheckEvent { MASK = AUTO; };
+  EVENT TimerStartEvent { MASK = AUTO; };
+  EVENT DriveStartEvent { MASK = AUTO; };
+  EVENT SteerStartEvent { MASK = AUTO; };
+  
+  /*-------------------------------------------------------------------------*/
+  /* Check on revolution count every 50ms for fine-tuning operations         */
+  /*-------------------------------------------------------------------------*/
+  ALARM cyclic_rev_timer
   {
     AUTOSTART = TRUE
     {
@@ -106,21 +158,20 @@ CPU ATMEL_AT91SAM7S256
     COUNTER = SysTimerCnt;
     ACTION = SETEVENT
     {
-      TASK = MotorControl;
-      EVENT = SteerMotorEvent;
+      TASK = MotorRevControl;
+      EVENT = RevCheckEvent;
     };
   };
   
   /*-------------------------------------------------------------------------*/
-  /* MotorControl aperiodic task while(1), event-driven, priority 5          */
+  /* MotorSpeedControl aperiodic task while(1), event-driven, priority 6     */
   /*-------------------------------------------------------------------------*/
-  TASK MotorControl
+  TASK MotorSpeedControl
   {
-    PRIORITY = 5;
+    PRIORITY = 6;
     
-    EVENT = StartMotorEvent;
-    EVENT = SteerMotorEvent;
-    EVENT = StopMotorEvent;
+    EVENT = MotorStartEvent;
+    EVENT = MotorStopEvent;
     
     ACTIVATION = 1;
     SCHEDULE = FULL;
@@ -130,38 +181,7 @@ CPU ATMEL_AT91SAM7S256
       APPMODE = appmode1;
     };
   };
-  
-  EVENT SteerMotorEvent { MASK = AUTO; };
-  
-  EVENT StopMotorEvent { MASK = AUTO; };
-  EVENT StartMotorEvent { MASK = AUTO; };
-  
-  /*-------------------------------------------------------------------------*/
-  /* LineFollower aperiodic task while(1), event-driven, priority 4          */
-  /*-------------------------------------------------------------------------*/
-  TASK LineFollower
-  {
-    PRIORITY = 4;
-    
-    EVENT = LineUpdateEvent;
-    EVENT = TurnCompleteEvent;
-    EVENT = ObjectDetectedEvent;
-    EVENT = DriveCompleteEvent;
-	EVENT = SteerCompleteEvent;
-    
-    ACTIVATION = 1;
-    SCHEDULE = FULL;
-    STACKSIZE = 512;
-    AUTOSTART = TRUE
-    {
-      APPMODE = appmode1;
-    };
-  };
-  
-  EVENT LineUpdateEvent { MASK = AUTO; };
-  EVENT TurnCompleteEvent { MASK = AUTO; };
-  EVENT ObjectDetectedEvent { MASK = AUTO; };
-  EVENT DriveCompleteEvent { MASK = AUTO; };
-  EVENT SteerCompleteEvent { MASK = AUTO; };
+  EVENT MotorStopEvent { MASK = AUTO; };
+  EVENT MotorStartEvent { MASK = AUTO; };
   
 };

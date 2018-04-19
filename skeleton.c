@@ -19,16 +19,21 @@ DeclareCounter(SysTimerCnt);
 DeclareTask(BackgroundAlways);
 DeclareTask(Display);
 DeclareTask(ReadSensors);
-DeclareTask(MotorControl);
 DeclareTask(LineFollower);
+DeclareTask(MotorRevControl);
+DeclareTask(MotorSpeedControl);
 
-DeclareEvent(StartMotorEvent);
-DeclareEvent(SteerMotorEvent);
-DeclareEvent(StopMotorEvent);
+DeclareEvent(RevCheckEvent);
+DeclareEvent(TimerStartEvent);
+DeclareEvent(DriveStartEvent);
+DeclareEvent(SteerStartEvent);
+
+DeclareEvent(MotorStartEvent);
+DeclareEvent(MotorStopEvent);
 
 DeclareEvent(LineUpdateEvent);
 DeclareEvent(ObjectDetectedEvent);
-DeclareEvent(TurnCompleteEvent);
+DeclareEvent(TimerCompleteEvent);
 DeclareEvent(DriveCompleteEvent);
 DeclareEvent(SteerCompleteEvent);
 
@@ -72,12 +77,12 @@ enum STEER_MAGNITUDE {
 	HARD = 75,
 };
 
-// A controls set by the sensor task and read by the motor task
-volatile int velocity = FORWARD * SPEED_0;
-volatile unsigned int drive_counter = 0;
+// Targets used by MotorRevControl
+volatile unsigned int countdown = 0;
+volatile int drive_target = 0;
+volatile int steer_target = 0;
 
-volatile bool steer_signal_event = false;
-volatile int target_angle = 0;
+volatile int velocity = FORWARD * SPEED_0;
 
 //----------------------------------------------------------------------------+
 // nxtOSEK hooks                                                              |
@@ -226,19 +231,20 @@ inline vector GetVector(int val) {
 //----------------------------------------------------------------------------+
 inline bool FollowLine(int speed, int direction, unsigned int timeout) {
 	// Clear any previous driving command (should be a no-op but safety first)
-	drive_counter = 0;
-	ClearEvent(DriveCompleteEvent);
+	countdown = 0;
+	ClearEvent(TimerCompleteEvent);
 	
-	// Set the global variables to drive_counter for the speed and duration desired
-	velocity = speed * direction;
-	drive_counter = timeout;
+	// Set the countdown timer
+	countdown = timeout;
+	SetEvent(MotorRevControl, TimerStartEvent);
 	
 	// Get the motor's going
-	SetEvent(MotorControl, StartMotorEvent);
+	velocity = speed * direction;
+	SetEvent(MotorSpeedControl, MotorStartEvent);
 	
 	// Wait for the timer or line found
 	while (1) {
-		WaitEvent(DriveCompleteEvent | LineUpdateEvent);
+		WaitEvent(TimerCompleteEvent | LineUpdateEvent);
 		
 		EventMaskType eMask = 0;
 		GetEvent(LineFollower, &eMask);
@@ -249,10 +255,10 @@ inline bool FollowLine(int speed, int direction, unsigned int timeout) {
 		}
 		
 		// Stop now that we've hit our timer or lost the line
-		SetEvent(MotorControl, StopMotorEvent);
+		SetEvent(MotorSpeedControl, MotorStopEvent);
 		
-		drive_counter = 0;
-		ClearEvent(DriveCompleteEvent);
+		countdown = 0;
+		ClearEvent(TimerCompleteEvent);
 		ClearEvent(LineUpdateEvent);
 		
 		return eMask & LineUpdateEvent ? true : false;
@@ -265,19 +271,20 @@ inline bool FollowLine(int speed, int direction, unsigned int timeout) {
 //----------------------------------------------------------------------------+
 inline bool SeekLine(int speed, int direction, unsigned int timeout) {
 	// Clear any previous driving command (should be a no-op but safety first)
-	drive_counter = 0;
-	ClearEvent(DriveCompleteEvent);
+	countdown = 0;
+	ClearEvent(TimerCompleteEvent);
 	
-	// Set the global variables to drive_counter for the speed and duration desired
-	velocity = speed * direction;
-	drive_counter = timeout;
+	// Set the countdown timer
+	countdown = timeout;
+	SetEvent(MotorRevControl, TimerStartEvent);
 	
 	// Get the motor's going
-	SetEvent(MotorControl, StartMotorEvent);
+	velocity = speed * direction;
+	SetEvent(MotorSpeedControl, MotorStartEvent);
 	
 	// Wait for the timer or line found
 	while (1) {
-		WaitEvent(DriveCompleteEvent | LineUpdateEvent);
+		WaitEvent(TimerCompleteEvent | LineUpdateEvent);
 		
 		EventMaskType eMask = 0;
 		GetEvent(LineFollower, &eMask);
@@ -288,10 +295,10 @@ inline bool SeekLine(int speed, int direction, unsigned int timeout) {
 		}
 		
 		// Stop now that we've hit our timer or found the line
-		SetEvent(MotorControl, StopMotorEvent);
+		SetEvent(MotorSpeedControl, MotorStopEvent);
 		
-		drive_counter = 0;
-		ClearEvent(DriveCompleteEvent);
+		countdown = 0;
+		ClearEvent(TimerCompleteEvent);
 		ClearEvent(LineUpdateEvent);
 		
 		return eMask & LineUpdateEvent ? true : false;
@@ -303,14 +310,10 @@ inline bool SeekLine(int speed, int direction, unsigned int timeout) {
 //----------------------------------------------------------------------------+
 inline void Steer(int angle) {
 	// Stop to simplify logic (should be a no-op but safety first)
-	SetEvent(MotorControl, StopMotorEvent);
+	SetEvent(MotorSpeedControl, MotorStopEvent);
 	
-	// Clear any previous signal (should be a no-op but safety first)
-	steer_signal_event = false;
-	ClearEvent(SteerCompleteEvent);
-	
-	target_angle = angle;
-	steer_signal_event = true;
+	steer_target = angle;
+	SetEvent(MotorRevControl, SteerStartEvent);
 	
 	WaitEvent(SteerCompleteEvent);
 	ClearEvent(SteerCompleteEvent);
@@ -481,7 +484,7 @@ TASK(LineFollower) {
 		drive_last = drive.now;
 		FollowLine(SPEED_4, FORWARD, 0);
 		int drive_delta = drive.now - drive_last;
-		debug = drive_delta;
+		//debug = drive_delta;
 		
 		if (SymmetricFinder(&angle_next, bump_dir, BUMP, 0, 30)) {
 			vector delta = GetVector(angle_next - angle);
@@ -513,64 +516,113 @@ TASK(LineFollower) {
 }
 
 //----------------------------------------------------------------------------+
-// MotorControl - aperiodic task while(1), event-driven, priority 5           |
+// MotorRevControl - aperiodic task while(1), event-driven, priority 5        |
 //----------------------------------------------------------------------------+
-TASK(MotorControl) {
-	while(1) {
-		WaitEvent(SteerMotorEvent | StartMotorEvent | StopMotorEvent);
+TASK(MotorRevControl) {
+	EventMaskType eMask = 0;
+	while (1) {
+		WaitEvent(SteerStartEvent | DriveStartEvent | TimerStartEvent);
+		GetEvent(MotorRevControl, &eMask);
 		
-		EventMaskType eMask = 0;
-		GetEvent(MotorControl, &eMask);
-		
-		if (eMask & SteerMotorEvent) {
-			ClearEvent(SteerMotorEvent);
+		if (eMask & TimerStartEvent) {
+			ClearEvent(TimerStartEvent);
 			
-			int current_angle = nxt_motor_get_count(STEER_MOTOR);
-			vector delta = GetVector(target_angle - current_angle);
+			// Don't wait at all if countdown is zero to start with
+			if (countdown == 0) { continue; }
 			
-			// Signal that steering is complete
-			if (delta.mag < 2) {
-				nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
+			while (1) {
+				WaitEvent(RevCheckEvent);
+				ClearEvent(RevCheckEvent);
 				
-				if (steer_signal_event) {
-					steer_signal_event = false;
-					SetEvent(LineFollower, SteerCompleteEvent);
-				}
-			}
-			
-			// Adjust the steering motor
-			else {
-				int speed;
-				if (delta.mag > 30) {
-					speed = 80;
-				}
-				else if (delta.mag > 15) {
-					speed = 70;
-				}
-				else {
-					speed = 60;
-				}
+				// Don't fire an event if an outside force set the countdown to 0
+				if (countdown == 0) { break; }
 				
-				nxt_motor_set_speed(STEER_MOTOR, speed * delta.dir, 0);
-			}
-			
-			// Signal the drive_counter timer when completed 
-			if (drive_counter > 0) {
-				if (--drive_counter == 0) {
-					SetEvent(LineFollower, DriveCompleteEvent);
+				if (--countdown == 0) {
+					SetEvent(LineFollower, TimerCompleteEvent);
 				}
 			}
 		}
 		
-		if (eMask & StartMotorEvent) {
-			ClearEvent(StartMotorEvent);
+		if (eMask & DriveStartEvent) {
+			ClearEvent(DriveStartEvent);
+			while (1) {
+				WaitEvent(RevCheckEvent);
+				ClearEvent(RevCheckEvent);
+				
+				int drive_current = nxt_motor_get_count(LEFT_MOTOR);
+				vector delta = GetVector(drive_target - drive_current);
+				
+				// Adjust the driving motors
+				if (delta.mag > 0) {
+					velocity = SPEED_4 * delta.dir;
+					SetEvent(MotorSpeedControl, MotorStartEvent);
+				}
+				
+				// Signal that steering is complete
+				else {
+					SetEvent(MotorSpeedControl, MotorStopEvent);
+					SetEvent(LineFollower, SteerCompleteEvent);
+					break;
+				}
+			}
+		}
+		
+		if (eMask & SteerStartEvent) {
+			ClearEvent(SteerStartEvent);
+			while (1) {
+				WaitEvent(RevCheckEvent);
+				ClearEvent(RevCheckEvent);
+				
+				int steer_current = nxt_motor_get_count(STEER_MOTOR);
+				vector delta = GetVector(steer_target - steer_current);
+				
+				// Adjust the steering motor
+				if (delta.mag > 1) {
+					int speed;
+					if (delta.mag > 30) {
+						speed = 80;
+					}
+					else if (delta.mag > 15) {
+						speed = 70;
+					}
+					else {
+						speed = 60;
+					}
+					
+					nxt_motor_set_speed(STEER_MOTOR, speed * delta.dir, 0);
+				}
+				
+				// Signal that steering is complete
+				else {
+					nxt_motor_set_speed(STEER_MOTOR, STOPPED, 1);
+					SetEvent(LineFollower, SteerCompleteEvent);
+					break;
+				}
+			}
+		}
+	}
+	
+	TerminateTask();
+}
+
+//----------------------------------------------------------------------------+
+// MotorSpeedControl - aperiodic task while(1), event-driven, priority 6      |
+//----------------------------------------------------------------------------+
+TASK(MotorSpeedControl) {
+	EventMaskType eMask = 0;
+	while(1) {
+		WaitEvent(MotorStartEvent | MotorStopEvent);
+		GetEvent(MotorSpeedControl, &eMask);
+		
+		if (eMask & MotorStartEvent) {
+			ClearEvent(MotorStartEvent);
 			
 			nxt_motor_set_speed(LEFT_MOTOR, velocity, 0);
 			nxt_motor_set_speed(RIGHT_MOTOR, velocity, 0);
 		}
 		
-		if (eMask & StopMotorEvent) {
-			ClearEvent(StopMotorEvent);
+		if (eMask & MotorStopEvent) {
+			ClearEvent(MotorStopEvent);
 			
 			nxt_motor_set_speed(LEFT_MOTOR, STOPPED, 1);
 			nxt_motor_set_speed(RIGHT_MOTOR, STOPPED, 1);
