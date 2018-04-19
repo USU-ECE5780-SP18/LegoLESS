@@ -12,12 +12,7 @@
 #define  LEFT_MOTOR NXT_PORT_B
 #define RIGHT_MOTOR NXT_PORT_C
 
-typedef struct {
-	int min;
-	int max;
-	int sum;
-	int	cnt;
-} DispStat;
+typedef struct { int now; int min; int max; int sum; int cnt; } DispStat;
 
 DeclareCounter(SysTimerCnt);
 
@@ -71,8 +66,8 @@ enum STEER_DIRECTION {
 };
 enum STEER_MAGNITUDE {
 	STRAIGHT = 0,
-	BUMP = 15,
-	SOFT = 30,
+	BUMP = 20,
+	SOFT = 45,
 	HARD = 75,
 };
 
@@ -147,17 +142,20 @@ TASK(Display) {
 // RecordStat: Tracks {avg, min, max} over period of TASK(Display)            |
 //----------------------------------------------------------------------------+
 inline void RecordStat(DispStat* stat, int val) {
-	stat->sum += val;
+	stat->now = val;
 	if (stat->cnt++ == 0) {
 		stat->min = val;
 		stat->max = val;
 		stat->sum = val;
 	}
-	else if (val < stat->min) {
-		stat->min = val;
-	}
-	else if (val > stat->max) {
-		stat->max = val;
+	else {
+		stat->sum += val;
+		if (val < stat->min) {
+			stat->min = val;
+		}
+		else if (val > stat->max) {
+			stat->max = val;
+		}
 	}
 }
 
@@ -318,11 +316,10 @@ inline void Steer(int angle) {
 }
 
 //----------------------------------------------------------------------------+
-// TestAngle: Attempts to find the line, reverses the test if it fails        |
+// TestForward: Attempts to find the line, reverses the test if it fails      |
 // returns true: If the line is found in the allotted time                    |
 //----------------------------------------------------------------------------+
-inline bool TestAngle(int seek_angle, int timeout) {
-	Steer(seek_angle);
+inline bool TestForward(int timeout) {
 	if (SeekLine(SPEED_4, FORWARD, timeout)) {
 		return true;
 	}
@@ -336,7 +333,7 @@ inline bool TestAngle(int seek_angle, int timeout) {
 // Tests increasing multiples of `bump` on alternating sides of `angle`       |
 // returns true: If the line is found                                         |
 //----------------------------------------------------------------------------+
-bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
+bool SymmetricFinder(int* angle, int dir1, int bump, int maxit, int timeout) {
 	int step = 0;
 	int dir2 = -dir1;
 	bool hard1 = false;
@@ -345,6 +342,7 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
 	
 	while (1) {
 		++step;
+		if (maxit && step > maxit) { return false; }
 		
 		if (!hard1) {
 			seek_angle = *angle + step * dir1 * bump;
@@ -354,7 +352,8 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
 				hard1 = true;
 			}
 			
-			if (TestAngle(seek_angle, timeout)) {
+			Steer(seek_angle);
+			if (TestForward(timeout)) {
 				*angle = seek_angle;
 				return true;
 			}
@@ -368,7 +367,8 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
 				hard2 = true;
 			}
 			
-			if (TestAngle(seek_angle, timeout)) {
+			Steer(seek_angle);
+			if (TestForward(timeout)) {
 				*angle = seek_angle;
 				return true;
 			}
@@ -385,13 +385,14 @@ bool SymmetricFinder(int* angle, int dir1, int bump, int timeout) {
 // Tests increasing multiples of `bump` on the given side of `angle`          |
 // returns true: If the line is found                                         |
 //----------------------------------------------------------------------------+
-bool AsymmetricFinder(int* angle, int dir, int bump, int timeout) {
+bool AsymmetricFinder(int* angle, int dir, int bump, int maxit, int timeout) {
 	int step = 0;
 	bool hard = false;
 	int seek_angle;
 	
 	while (1) {
 		++step;
+		if (maxit && step > maxit) { return false; }
 		
 		if (!hard) {
 			seek_angle = *angle + step * dir * bump;
@@ -401,7 +402,8 @@ bool AsymmetricFinder(int* angle, int dir, int bump, int timeout) {
 				hard = true;
 			}
 			
-			if (TestAngle(seek_angle, timeout)) {
+			Steer(seek_angle);
+			if (TestForward(timeout)) {
 				*angle = seek_angle;
 				return true;
 			}
@@ -468,15 +470,43 @@ TASK(LineFollower) {
 	int angle_next = angle;
 	U8 state = START;
 	
+	int drive_last = drive.now;
+	int course_dir = LEFT;
+	int turn_dir = LEFT;
+	int bump_dir = LEFT;
+	
+	// Follow a straight line
 	while (1) {
+		drive_last = drive.now;
 		FollowLine(SPEED_4, FORWARD, 0);
+		int drive_delta = drive.now - drive_last;
+		debug = drive_delta;
 		
-		if (SymmetricFinder(&angle_next, LEFT, BUMP, 30)) {
+		if (SymmetricFinder(&angle_next, bump_dir, BUMP, 0, 30)) {
+			vector delta = GetVector(angle_next - angle);
 			angle = angle_next;
+			
+			// It is expected we'll wobble on alternating sides
+			// Hopefully with a small ripple
+			if (delta.dir == bump_dir) {
+				bump_dir *= -1;
+			}
+			
+			if (delta.mag >= SOFT) {
+				break;
+			}
 		}
-		
-		break;
+		else {
+			TerminateTask();
+			return;
+		}
 	}
+	
+	// Follow a curved line
+	//while (1) {
+		//FollowLine(SPEED_4, FORWARD, 0);
+		
+	//}
 	
 	TerminateTask();
 }
