@@ -31,6 +31,7 @@ DeclareTask(MotorSpeedControl);
 
 DeclareEvent(LineUpdateEvent);
 DeclareEvent(ObjectDetectedEvent);
+DeclareEvent(TimerStartedEvent);
 DeclareEvent(TimerCompleteEvent);
 DeclareEvent(DriveCompleteEvent);
 DeclareEvent(SteerCompleteEvent);
@@ -240,7 +241,7 @@ inline vector GetVector(int val) {
 // FollowLine: Drive until loosing the line or hitting the timeout (0 => inf) |
 // returns true: If the line is lost before the time runs out                 |
 //----------------------------------------------------------------------------+
-inline bool FollowLine(int speed, int direction, unsigned int timeout) {
+bool FollowLine(int speed, int direction, unsigned int timeout) {
 	// Clear any previous driving command (should be a no-op but safety first)
 	countdown = 0;
 	ClearEvent(TimerCompleteEvent);
@@ -280,7 +281,7 @@ inline bool FollowLine(int speed, int direction, unsigned int timeout) {
 // SeekLine: Drive until finding the line or hitting the timeout              |
 // returns true: If the line is found before the time runs out                |
 //----------------------------------------------------------------------------+
-inline bool SeekLine(int speed, int direction, unsigned int timeout) {
+bool SeekLine(int speed, int direction, unsigned int timeout) {
 	// Clear any previous driving command (should be a no-op but safety first)
 	countdown = 0;
 	ClearEvent(TimerCompleteEvent);
@@ -294,15 +295,28 @@ inline bool SeekLine(int speed, int direction, unsigned int timeout) {
 	SetEvent(MotorSpeedControl, MotorStartEvent);
 	
 	// Wait for the timer or line found
+	bool moved = false;
+	bool found = false;
 	while (1) {
-		WaitEvent(TimerCompleteEvent | LineUpdateEvent);
+		WaitEvent(TimerCompleteEvent | TimerStartedEvent | LineUpdateEvent);
 		
 		EventMaskType eMask = 0;
 		GetEvent(LineFollower, &eMask);
 		
-		if (eMask & LineUpdateEvent && !on_line) {
-			ClearEvent(LineUpdateEvent);
-			continue; 
+		if (eMask & TimerStartedEvent) {
+			ClearEvent(TimerStartedEvent);
+			moved = true;
+		}
+		
+		if (eMask & LineUpdateEvent) {
+			if (!on_line) {
+				ClearEvent(LineUpdateEvent);
+				continue; 
+			}
+			else if (!moved) {
+				found = true;
+				continue;
+			}
 		}
 		
 		// Stop now that we've hit our timer or found the line
@@ -594,7 +608,7 @@ TASK(LineFollower) {
 	// the obstacle
 	state = 5;
 	
-	Steer(STRAIGHT);
+	Steer(course_dir * BUMP / 2);
 	SeekLine(SPEED_4, FORWARD, 100);
 	Steer(course_dir * HARD);
 	SeekLine(SPEED_4, FORWARD, 0);
@@ -635,7 +649,6 @@ TASK(LineFollower) {
 	while (1) {
 		drive_last = drive.now;
 		find =
-			Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER) ||
 			Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER);
 		
 		if (!find) {
@@ -654,8 +667,11 @@ TASK(LineFollower) {
 			angle_next = angle = course_dir * HARD;
 			break;
 		}
+		
+		FollowLine(SPEED_4, FORWARD, 0);
 	}
-	
+	TerminateTask();
+	return;
 	// back to a straight line after 90
 	state = 8;
 	while (1) {
@@ -710,6 +726,7 @@ TASK(MotorRevControl) {
 			
 			// Don't wait at all if countdown is zero to start with
 			if (countdown == 0) { continue; }
+			bool ticked = false;
 			
 			while (1) {
 				WaitEvent(RevCheckEvent);
@@ -720,6 +737,10 @@ TASK(MotorRevControl) {
 				
 				if (--countdown == 0) {
 					SetEvent(LineFollower, TimerCompleteEvent);
+				}
+				else if (!ticked) {
+					ticked = true;
+					SetEvent(LineFollower, TimerStartedEvent);
 				}
 			}
 		}
