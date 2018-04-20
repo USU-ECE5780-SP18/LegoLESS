@@ -4,13 +4,15 @@
 #include "kernel_id.h"
 #include "ecrobot_interface.h"
 
-/* You can define the ports used here */
-#define COLOR_PORT NXT_PORT_S1
-#define SONAR_PORT NXT_PORT_S4
-
 #define STEER_MOTOR NXT_PORT_A
 #define  LEFT_MOTOR NXT_PORT_B
 #define RIGHT_MOTOR NXT_PORT_C
+
+#define COLOR_PORT NXT_PORT_S1
+#define SONAR_PORT NXT_PORT_S4
+
+#define LINE_THRESHOLD      300
+#define OBJECT_THRESHOLD    30
 
 typedef volatile struct { int now; int min; int max; int sum; int cnt; } DispStat;
 
@@ -188,7 +190,7 @@ TASK(ReadSensors) {
 	int drive_now = nxt_motor_get_count(LEFT_MOTOR);
 	RecordStat(&drive, drive_now);
 	
-	if (light_now < 300) {
+	if (light_now < LINE_THRESHOLD) {
 		line_rev_count = drive_now;
 		if (!on_line) {
 			on_line = true;
@@ -200,7 +202,7 @@ TASK(ReadSensors) {
 		SetEvent(LineFollower, LineUpdateEvent);
 	}
 	
-	if (sonar_now < 30) {
+	if (sonar_now < OBJECT_THRESHOLD) {
 		if (!obstacle) {
 			obstacle = true;
 			SetEvent(LineFollower, ObjectDetectedEvent);
@@ -422,51 +424,6 @@ bool AsymmetricFinder(int* angle, int dir, int bump, int minit, int maxit, int t
 		}
 	}
 }
-
-enum COURSE_FSM {
-	START           = 0,
-	FIRST_CURVE     = 1,
-	
-	FIRST_DOTTED    = 3,
-	FIRST_CORNER    = 4,
-	
-	OBSTACLE        = 6,
-	
-	SECOND_CORNER   = 9,
-	
-	SECOND_DOTTED   = 11,
-	SECOND_CURVE    = 12,
-	
-	FINISH          = 14,
-};
-
-// default left to right looking orientation
-// multiply by -1 to reverse course_prediction
-int course_prediction[15] = {
-	BUMP,				//  0 => START
-	
-	LEFT * SOFT,		//  1 => FIRST_CURVE
-	RIGHT * SOFT,		//  2 => END_FIRST_CURVE
-	
-	STRAIGHT,			//  3 => FIRST_DOTTED
-	
-	RIGHT * HARD,		//  4 => FIRST_CORNER
-	LEFT * HARD,		//  5 => END_FIRST_CORNER
-	
-	RIGHT * HARD,		//  6 => OBSTACLE_AVERT
-	LEFT * HARD,		//  7 => OBSTACLE_CIRCLE_AROUND
-	RIGHT * HARD,		//  8 => OBSTACLE_STRAIGHTEN_BACK_ON_TRACK
-	
-	RIGHT * HARD,		//  9 => SECOND_CORNER
-	LEFT * HARD,		// 10 => END_SECOND_CORNER
-	
-	STRAIGHT,			// 11 => SECOND_DOTTED
-	
-	LEFT * SOFT,		// 12 => SECOND_CURVE
-	RIGHT * SOFT,		// 13 => END_SECOND_CURVE
-	
-	BUMP,				// 14 => FINISH
-};
 
 //----------------------------------------------------------------------------+
 // LineFollower - aperiodic task while(1), event-driven, priority 4           |
