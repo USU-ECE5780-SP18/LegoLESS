@@ -67,7 +67,7 @@ CPU ATMEL_AT91SAM7S256
   };
   
   /*-------------------------------------------------------------------------*/
-  /* ReadSensors periodic every 50ms, priority 3                             */
+  /* ReadSensors periodic every 45ms, priority 3                             */
   /*-------------------------------------------------------------------------*/
   TASK ReadSensors
   {
@@ -81,7 +81,7 @@ CPU ATMEL_AT91SAM7S256
   {
     AUTOSTART = TRUE
     {
-      CYCLETIME = 55;
+      CYCLETIME = 45;
       ALARMTIME = 1;
       APPMODE = appmode1;
     };

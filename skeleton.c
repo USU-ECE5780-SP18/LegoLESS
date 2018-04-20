@@ -171,7 +171,7 @@ inline void RecordStat(DispStat* stat, int val) {
 }
 
 //----------------------------------------------------------------------------+
-// ReadSensors - periodic every 50ms, priority 3                              |
+// ReadSensors - periodic every 45ms, priority 3                              |
 //----------------------------------------------------------------------------+
 TASK(ReadSensors) {
 	// Read the light sensor
