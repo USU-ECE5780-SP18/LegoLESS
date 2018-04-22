@@ -657,12 +657,12 @@ TASK(LineFollower) {
 		
 		vector angle_v = GetVector(angle);
 		
-		if (angle_v.mag < BUMP) {
-			angle_next = angle = STRAIGHT;
-			break;
-		}
+		//if (angle_v.mag < BUMP) {
+		//	angle_next = angle = STRAIGHT;
+		//	break;
+		//}
 	}
-	
+	/*
 	// Follow a dashed line
 	state = 3;
 	while (1) {
@@ -755,7 +755,7 @@ TASK(LineFollower) {
 		// Expect the next turn to be the same direction as the last
 		bump_dir = delta.dir;
 	}
-	
+	*/
 	TerminateTask();
 }
 
