@@ -594,8 +594,10 @@ TASK(LineFollower) {
 	// the obstacle
 	state = 5;
 	
-	Steer(STRAIGHT);
-	SeekLine(SPEED_4, FORWARD, 100);
+	Steer(-course_dir * TURN);
+	SeekLine(SPEED_4, FORWARD, 50);
+	Steer(course_dir * SOFT);
+	SeekLine(SPEED_4, FORWARD, 50);
 	Steer(course_dir * HARD);
 	SeekLine(SPEED_4, FORWARD, 0);
 	
@@ -616,6 +618,9 @@ TASK(LineFollower) {
 	SeekLine(SPEED_4, FORWARD, 0);
 	
 	angle_next = angle = -course_dir * HARD;
+	
+#undef DURATION_STRAIGHTENER
+#define DURATION_STRAIGHTENER 30
 	
 	// Follow a curved line
 	state = 2;
