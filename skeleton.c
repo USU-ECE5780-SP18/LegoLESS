@@ -467,7 +467,7 @@ TASK(LineFollower) {
 	int drive_last = drive.now;
 	int course_dir = LEFT;
 	int bump_dir = LEFT;
-	/*
+	
 	// Follow a straight line
 	state = 1;
 	while (1) {
@@ -570,8 +570,7 @@ TASK(LineFollower) {
 		// Expect the next turn to be the same direction as the last
 		bump_dir = delta.dir;
 	}
-	*/
-			angle_next = -course_dir * HARD;
+	
 	// Make a sharp turn
 	state = 4;
 	while (1) {
