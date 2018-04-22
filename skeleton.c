@@ -81,7 +81,7 @@ enum STEER_MAGNITUDE {
 	BUMP = 25,
 	SOFT = 35,
 	TURN = 45,
-	HARD = 77,
+	HARD = 75,
 };
 
 // Targets used by MotorRevControl
@@ -240,7 +240,7 @@ inline vector GetVector(int val) {
 // FollowLine: Drive until loosing the line or hitting the timeout (0 => inf) |
 // returns true: If the line is lost before the time runs out                 |
 //----------------------------------------------------------------------------+
-inline bool FollowLine(int speed, int direction, unsigned int timeout) {
+bool FollowLine(int speed, int direction, unsigned int timeout) {
 	// Clear any previous driving command (should be a no-op but safety first)
 	countdown = 0;
 	ClearEvent(TimerCompleteEvent);
@@ -280,7 +280,7 @@ inline bool FollowLine(int speed, int direction, unsigned int timeout) {
 // SeekLine: Drive until finding the line or hitting the timeout              |
 // returns true: If the line is found before the time runs out                |
 //----------------------------------------------------------------------------+
-inline bool SeekLine(int speed, int direction, unsigned int timeout) {
+bool SeekLine(int speed, int direction, unsigned int timeout) {
 	// Clear any previous driving command (should be a no-op but safety first)
 	countdown = 0;
 	ClearEvent(TimerCompleteEvent);
@@ -467,7 +467,7 @@ TASK(LineFollower) {
 	int drive_last = drive.now;
 	int course_dir = LEFT;
 	int bump_dir = LEFT;
-	
+	/*
 	// Follow a straight line
 	state = 1;
 	while (1) {
@@ -570,7 +570,8 @@ TASK(LineFollower) {
 		// Expect the next turn to be the same direction as the last
 		bump_dir = delta.dir;
 	}
-	
+	*/
+			angle_next = -course_dir * HARD;
 	// Make a sharp turn
 	state = 4;
 	while (1) {
@@ -599,44 +600,47 @@ TASK(LineFollower) {
 	Steer(course_dir * HARD);
 	SeekLine(SPEED_4, FORWARD, 0);
 	
-	angle_next = angle = STRAIGHT;
-	Steer(angle);
+	// Get our back wheels to the line
+	Steer(-course_dir * BUMP);
+	FollowLine(SPEED_4, FORWARD, 0);
 	
-	// Straighten up on the line before the 90 turn
-	FollowLine(SPEED_4, FORWARD, 20);
-	find = Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER / 2);
-	if (!find) {
-		debug = 0;
-		TerminateTask();
-		return;
-	}
+	Steer(STRAIGHT);
+	SeekLine(SPEED_4, FORWARD, DURATION_STRAIGHTENER * 3);
 	
-	bump_dir = -course_dir;
+	// Back up into the line
+	Steer(course_dir * HARD);
+	SeekLine(SPEED_4, REVERSE, 0);
 	
-	state = 6;
+	// Turn into the corner
+	Steer(-course_dir * HARD);
+	FollowLine(SPEED_4, FORWARD, 0);
+	SeekLine(SPEED_4, FORWARD, 0);
+	
+	angle_next = angle = -course_dir * HARD;
+	
+	// Follow a curved line
+	state = 2;
 	while (1) {
-		FollowLine(SPEED_4, FORWARD, 20);
+		FollowLine(SPEED_4, FORWARD, 0);
 		
-		angle_next = STRAIGHT;
 		find =
-			SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, DURATION_STRAIGHTENER);
+			AsymmetricFinder(&angle_next,  bump_dir, BUMP, 1, 3, DURATION_STRAIGHTENER) ||
+			AsymmetricFinder(&angle_next, -bump_dir, BUMP, 1, 3, DURATION_STRAIGHTENER);
 		
 		if (!find) {
-			angle_next = angle = -course_dir * HARD;
-			break;
+			angle_next = STRAIGHT;
+			find = SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, DURATION_STRAIGHTENER);
 		}
 		
-		Steer(STRAIGHT);
-	}
-	
-	
-	// 90 degree for a time
-	state = 7;
-	while (1) {
-		drive_last = drive.now;
-		find =
-			Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER) ||
-			Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER);
+		if (!find) {
+			Steer(STRAIGHT);
+			find = TestForward(DURATION_DASHED_FINDER);
+		}
+		
+		if (!find) {
+			angle_next = angle;
+			find = Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER / 2);
+		}
 		
 		if (!find) {
 			debug = 0;
@@ -644,20 +648,90 @@ TASK(LineFollower) {
 			return;
 		}
 		
-		vector drive_delta = GetVector(drive.now - drive_last);
-		debug = drive_delta.mag;
-		
+		vector delta = GetVector(angle_next - angle);
 		angle = angle_next;
 		
-		if (drive_delta.mag > THRESHOLD_CURVE_DETECTOR) {
-			bump_dir = course_dir;
-			angle_next = angle = course_dir * HARD;
+		// Turn prediction:
+		// Expect the next turn to be the same direction as the last
+		bump_dir = delta.dir;
+		
+		vector angle_v = GetVector(angle);
+		
+		if (angle_v.mag < BUMP) {
+			angle_next = angle = STRAIGHT;
 			break;
 		}
 	}
 	
-	// back to a straight line after 90
-	state = 8;
+	// Follow a dashed line
+	state = 3;
+	while (1) {
+		FollowLine(SPEED_4, FORWARD, 0);
+		
+		if (TestForward(DURATION_DASHED_FINDER)) { continue; }
+		
+		angle_next = STRAIGHT;
+		find = SymmetricFinder(&angle_next, bump_dir, TURN, 0, 1, 15);
+		
+		if (!find) {
+			angle_next = -course_dir * HARD;
+			break;
+		}
+		
+		Steer(STRAIGHT);
+		vector delta = GetVector(angle_next);
+		
+		// Turn prediction:
+		// Expect the next turn to be the same direction as the last
+		bump_dir = delta.dir;
+	}
+	
+	// Follow a curved line
+	state = 2;
+	while (1) {
+		FollowLine(SPEED_4, FORWARD, 0);
+		
+		find =
+			AsymmetricFinder(&angle_next,  bump_dir, BUMP, 1, 3, DURATION_STRAIGHTENER) ||
+			AsymmetricFinder(&angle_next, -bump_dir, BUMP, 1, 3, DURATION_STRAIGHTENER);
+		
+		if (!find) {
+			angle_next = STRAIGHT;
+			find = SymmetricFinder(&angle_next, bump_dir, HARD, 0, 1, DURATION_STRAIGHTENER);
+		}
+		
+		if (!find) {
+			Steer(STRAIGHT);
+			find = TestForward(DURATION_DASHED_FINDER);
+		}
+		
+		if (!find) {
+			angle_next = angle;
+			find = Hard3TurnFinder(&angle_next, DURATION_STRAIGHTENER / 2);
+		}
+		
+		if (!find) {
+			debug = 0;
+			TerminateTask();
+			return;
+		}
+		
+		vector delta = GetVector(angle_next - angle);
+		angle = angle_next;
+		
+		// Turn prediction:
+		// Expect the next turn to be the same direction as the last
+		bump_dir = delta.dir;
+		
+		vector angle_v = GetVector(angle);
+		
+		if (angle_v.mag < BUMP) {
+			angle_next = angle = STRAIGHT;
+			break;
+		}
+	}
+	
+	state = 1;
 	while (1) {
 		FollowLine(SPEED_4, FORWARD, 0);
 		drive_last = drive.now;
@@ -671,9 +745,7 @@ TASK(LineFollower) {
 		debug = drive_delta.mag;
 		
 		if (!find) {
-			debug = -3;
-			TerminateTask();
-			return;
+			break;
 		}
 		
 		Steer(STRAIGHT);
@@ -682,16 +754,7 @@ TASK(LineFollower) {
 		// Turn prediction:
 		// Expect the next turn to be the same direction as the last
 		bump_dir = delta.dir;
-		
-		// Advance to the next stage after a significant turn
-		if (drive_delta.mag > THRESHOLD_CURVE_DETECTOR) {
-			course_dir = bump_dir;
-			angle_next = angle = course_dir * TURN;
-			break;
-		}
 	}
-	
-	
 	
 	TerminateTask();
 }
